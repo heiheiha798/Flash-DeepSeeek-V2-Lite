@@ -1,7 +1,7 @@
 # SGLang Baseline
 
-This baseline records the official SGLang path for `DeepSeek-V2-Lite-Chat` on
-A100. On SM80, SGLang's default MLA attention backend is `triton`; CUDA graph is
+This baseline records the official SGLang path for `DeepSeek-V2-Lite-Chat`. On
+A100/SM80, SGLang's default MLA attention backend is `triton`; CUDA graph is
 enabled by default. The single-batch script defaults to batch size 1; the sweep script captures each tested batch size separately.
 
 ## Environment
@@ -27,7 +27,7 @@ sgl-kernel 0.3.21
 ```
 
 `flash_attn` FA2 is installed from the local wheel, but SGLang 0.5.9 does not
-use an explicit FA2 backend for DeepSeek-V2-Lite MLA on A100. The official
+use an explicit FA2 backend for DeepSeek-V2-Lite MLA on A100/SM80. The official
 default backend is `triton`, which is the baseline used here.
 
 Check the environment:
@@ -66,15 +66,19 @@ Default benchmark shape:
 - dtype: `bfloat16`
 - CUDA graph batch sizes: `BATCH_SIZE` in the sweep, `1` in the single-batch default
 
-Latest observed GPU0 decode result:
+Latest observed RTX A6000 GPU2 decode result:
 
 ```text
-median decode latency: 0.006877 s
-decode TPS: 145.41 tok/s
-hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
+median decode latency: 0.00907 s
+decode TPS: 110.21 tok/s
+hardware: NVIDIA RTX A6000, sm86, 48 GB; Intel(R) Xeon(R) Gold 5220R, 48C/48T, 376.55 GiB RAM
 software: torch 2.9.1+cu130, triton 3.5.1, sglang 0.5.9, flash_attn 2.8.3
 ```
 
 The script prints `nvidia-smi` first and refuses to run if the selected GPU has
 an existing compute process. Set `ALLOW_BUSY_GPU=1` only for intentional manual
 overrides.
+
+## Current Caveat
+
+On RTX A6000, SGLang reports missing fused MoE tuning configs for `E=64,N=1408,device_name=NVIDIA_RTX_A6000*.json`. The result is valid for the official default path, but tuned MoE configs may improve it.

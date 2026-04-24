@@ -8,7 +8,7 @@ commands used to compare against the DeepSeek-V2-Lite Triton path.
 - llama.cpp source: `/data/home/tianjianyang/code/llama.cpp`
 - conda env: `/data/home/tianjianyang/.conda/envs/dsv2lite-llamacpp`
 - CUDA build: `/data/home/tianjianyang/code/llama.cpp/build-cuda-a100`
-- default model: `/data/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf`
+- default model: `/data/home/tianjianyang/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf`
 
 The similarly named `/data/models/gguf_models/DeepSeek-V2-Lite-Chat-F16.gguf`
 was not used because it is a zero-byte file without read permission for this

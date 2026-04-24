@@ -4,7 +4,7 @@ set -euo pipefail
 VLLM_ENV=${VLLM_ENV:-/data/home/tianjianyang/.conda/envs/dsv2lite-vllm}
 VLLM_BIN=${VLLM_BIN:-${VLLM_ENV}/bin/vllm}
 VLLM_PYTHON=${VLLM_PYTHON:-${VLLM_ENV}/bin/python}
-MODEL_PATH=${MODEL_PATH:-/data/models/DeepSeek-V2-Lite-Chat}
+MODEL_PATH=${MODEL_PATH:-/data/home/tianjianyang/models/DeepSeek-V2-Lite-Chat}
 GPU=${GPU:-0}
 RUN_DIR=${RUN_DIR:-/tmp}
 

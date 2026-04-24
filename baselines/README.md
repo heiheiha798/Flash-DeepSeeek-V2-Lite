@@ -9,3 +9,7 @@ commands used for comparison.
 - `llama_cpp/`: llama.cpp CUDA baseline for `DeepSeek-V2-Lite-Chat` GGUF, including `llama-bench -b/-ub` sweep `1..512`.
 - `sglang/`: official SGLang baseline for `DeepSeek-V2-Lite-Chat` HF weights, including batch sweep `1..512`.
 - `vllm/`: official vLLM baseline for `DeepSeek-V2-Lite-Chat` HF weights, including batch sweep `1..512`.
+
+## Results
+
+See `docs/third_party_baselines.md` for the current third-party decode TPS table and reproduction notes.

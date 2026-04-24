@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.hardware_info import collect_hardware_info
-from triton_kernels.moe_grouped_gemv import grouped_routed_moe, pack_routed_experts
+from triton_kernels.moe_grouped_gemv import PackedRoutedExperts, packed_routed_moe, pack_routed_experts
 from triton_kernels.moe_router import router_softmax_topk6_triton
 from triton_kernels.attention_prepost import (
     copy_single_token_to_cache,
@@ -216,7 +216,7 @@ def _greedy_decode(logits: torch.Tensor) -> torch.Tensor:
     return torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
 
-def _patch_moe_for_graph(model: torch.nn.Module) -> None:
+def _initialize_packed_moe(model: torch.nn.Module) -> None:
     def _graph_gate_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if (
             hidden_states.device.type == "cuda"
@@ -237,10 +237,16 @@ def _patch_moe_for_graph(model: torch.nn.Module) -> None:
             return topk_ids, topk_weights, None
         return self._graph_original_gate_forward(hidden_states)
 
-    def _graph_moe_infer(self, x: torch.Tensor, topk_ids: torch.Tensor, topk_weight: torch.Tensor) -> torch.Tensor:
-        if self.ep_size != 1 or x.shape[0] != 1:
-            return self._graph_original_moe_infer(x, topk_ids, topk_weight)
-        return grouped_routed_moe(x, topk_ids, topk_weight, self._graph_packed_routed_experts)
+    def _packed_moe_infer(self, x: torch.Tensor, topk_ids: torch.Tensor, topk_weight: torch.Tensor) -> torch.Tensor:
+        packed = PackedRoutedExperts(
+            gate_up_weights=self._graph_packed_gate_up_weights,
+            down_weights=self._graph_packed_down_weights,
+            hidden_size=self._graph_packed_hidden_size,
+            intermediate_size=self._graph_packed_intermediate_size,
+            num_experts=self._graph_packed_num_experts,
+            topk=self._graph_packed_topk,
+        )
+        return packed_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
 
     for layer in model.model.layers:
         mlp = layer.mlp
@@ -248,14 +254,25 @@ def _patch_moe_for_graph(model: torch.nn.Module) -> None:
             continue
         if getattr(mlp, "_graph_moe_patched", False):
             continue
-        mlp._graph_packed_routed_experts = pack_routed_experts(mlp)
-        mlp._graph_original_moe_infer = mlp.moe_infer
-        mlp.moe_infer = _graph_moe_infer.__get__(mlp, type(mlp))
-        mlp.gate._graph_router_weight_fp32 = mlp.gate.weight.detach().float().contiguous()
+
+        packed = pack_routed_experts(mlp, device="cpu")
+        num_experts = len(mlp.experts)
+        mlp.experts = torch.nn.ModuleList([None for _ in range(num_experts)])
+        mlp.register_buffer("_graph_packed_gate_up_weights", packed.gate_up_weights, persistent=False)
+        mlp.register_buffer("_graph_packed_down_weights", packed.down_weights, persistent=False)
+        mlp._graph_packed_hidden_size = packed.hidden_size
+        mlp._graph_packed_intermediate_size = packed.intermediate_size
+        mlp._graph_packed_num_experts = packed.num_experts
+        mlp._graph_packed_topk = packed.topk
+        mlp.moe_infer = _packed_moe_infer.__get__(mlp, type(mlp))
+        mlp.gate.register_buffer(
+            "_graph_router_weight_fp32",
+            mlp.gate.weight.detach().float().contiguous(),
+            persistent=False,
+        )
         mlp.gate._graph_original_gate_forward = mlp.gate.forward
         mlp.gate.forward = _graph_gate_forward.__get__(mlp.gate, type(mlp.gate))
         mlp._graph_moe_patched = True
-
 
 def _patch_rmsnorm_for_graph(model: torch.nn.Module) -> None:
     def _graph_rmsnorm_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -509,7 +526,6 @@ def _run_graph_decode(
     use_sota_graph = batch_size == 1
     graph_cache = GraphCache(num_layers=model.config.num_hidden_layers, max_cache_len=max_cache_len)
     graph_cache.set_triton_cache_write(use_sota_graph)
-    _patch_moe_for_graph(model)
     _patch_rmsnorm_for_graph(model)
     _patch_mlp_elementwise_for_graph(model)
     _patch_attention_for_graph(model)
@@ -627,9 +643,10 @@ def main() -> None:
         args.model_path,
         trust_remote_code=True,
         dtype=torch.bfloat16,
-        device_map=args.device,
         attn_implementation="eager",
     )
+    _initialize_packed_moe(model)
+    model.to(args.device)
     model.eval()
 
     if tokenizer.pad_token_id is None:

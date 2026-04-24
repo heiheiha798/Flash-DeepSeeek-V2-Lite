@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.hardware_info import collect_hardware_info
-from triton_kernels.moe_grouped_gemv import grouped_routed_moe, pack_routed_experts
+from triton_kernels.moe_grouped_gemv import PackedRoutedExperts, packed_routed_moe, pack_routed_experts
 
 
 class GraphCacheLayer(CacheLayerMixin):
@@ -184,11 +184,17 @@ def _greedy_decode(logits: torch.Tensor) -> torch.Tensor:
     return torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
 
-def _patch_moe_for_graph(model: torch.nn.Module) -> None:
-    def _graph_moe_infer(self, x: torch.Tensor, topk_ids: torch.Tensor, topk_weight: torch.Tensor) -> torch.Tensor:
-        if self.ep_size != 1 or x.shape[0] != 1:
-            return self._graph_original_moe_infer(x, topk_ids, topk_weight)
-        return grouped_routed_moe(x, topk_ids, topk_weight, self._graph_packed_routed_experts)
+def _initialize_packed_moe(model: torch.nn.Module) -> None:
+    def _packed_moe_infer(self, x: torch.Tensor, topk_ids: torch.Tensor, topk_weight: torch.Tensor) -> torch.Tensor:
+        packed = PackedRoutedExperts(
+            gate_up_weights=self._graph_packed_gate_up_weights,
+            down_weights=self._graph_packed_down_weights,
+            hidden_size=self._graph_packed_hidden_size,
+            intermediate_size=self._graph_packed_intermediate_size,
+            num_experts=self._graph_packed_num_experts,
+            topk=self._graph_packed_topk,
+        )
+        return packed_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
 
     for layer in model.model.layers:
         mlp = layer.mlp
@@ -196,11 +202,18 @@ def _patch_moe_for_graph(model: torch.nn.Module) -> None:
             continue
         if getattr(mlp, "_graph_moe_patched", False):
             continue
-        mlp._graph_packed_routed_experts = pack_routed_experts(mlp)
-        mlp._graph_original_moe_infer = mlp.moe_infer
-        mlp.moe_infer = _graph_moe_infer.__get__(mlp, type(mlp))
-        mlp._graph_moe_patched = True
 
+        packed = pack_routed_experts(mlp, device="cpu")
+        num_experts = len(mlp.experts)
+        mlp.experts = torch.nn.ModuleList([None for _ in range(num_experts)])
+        mlp.register_buffer("_graph_packed_gate_up_weights", packed.gate_up_weights, persistent=False)
+        mlp.register_buffer("_graph_packed_down_weights", packed.down_weights, persistent=False)
+        mlp._graph_packed_hidden_size = packed.hidden_size
+        mlp._graph_packed_intermediate_size = packed.intermediate_size
+        mlp._graph_packed_num_experts = packed.num_experts
+        mlp._graph_packed_topk = packed.topk
+        mlp.moe_infer = _packed_moe_infer.__get__(mlp, type(mlp))
+        mlp._graph_moe_patched = True
 
 def _sync_cuda() -> None:
     torch.cuda.synchronize()
@@ -289,7 +302,6 @@ def _run_graph_decode(
     prompt_len = int(input_ids.shape[1])
     max_cache_len = prompt_len + max_new_tokens + 8
     graph_cache = GraphCache(num_layers=model.config.num_hidden_layers, max_cache_len=max_cache_len)
-    _patch_moe_for_graph(model)
 
     with torch.inference_mode():
         first_token, prefill_seconds = _prefill_once(model=model, input_ids=input_ids, cache=graph_cache)
@@ -365,9 +377,10 @@ def main() -> None:
         args.model_path,
         trust_remote_code=True,
         dtype=torch.bfloat16,
-        device_map=args.device,
         attn_implementation="eager",
     )
+    _initialize_packed_moe(model)
+    model.to(args.device)
     model.eval()
 
     if tokenizer.pad_token_id is None:

@@ -5,7 +5,7 @@ LLAMA_CPP_DIR=${LLAMA_CPP_DIR:-/data/home/tianjianyang/code/llama.cpp}
 LLAMA_CPP_BUILD_DIR=${LLAMA_CPP_BUILD_DIR:-${LLAMA_CPP_DIR}/build-cuda-a100}
 LLAMA_CPP_REPO=${LLAMA_CPP_REPO:-git@github.com:ggml-org/llama.cpp.git}
 LLAMA_CPP_ENV=${LLAMA_CPP_ENV:-/data/home/tianjianyang/.conda/envs/dsv2lite-llamacpp}
-DSV2_GGUF=${DSV2_GGUF:-/data/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf}
+DSV2_GGUF=${DSV2_GGUF:-/data/home/tianjianyang/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf}
 GPU=${GPU:-0}
 
 llama_cpp_bin() {

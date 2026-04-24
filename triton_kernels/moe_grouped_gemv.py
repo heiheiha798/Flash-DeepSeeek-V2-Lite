@@ -18,6 +18,11 @@ class PackedRoutedExperts:
     num_experts: int
     topk: int
 
+    def to(self, *args, **kwargs) -> "PackedRoutedExperts":
+        self.gate_up_weights = self.gate_up_weights.to(*args, **kwargs)
+        self.down_weights = self.down_weights.to(*args, **kwargs)
+        return self
+
 
 @triton.jit
 def _fused_gate_up_swiglu_kernel(
@@ -162,7 +167,7 @@ def _down_reduce_topk6_kernel(
     tl.store(out_ptr + row_offsets, out.to(OUT_DTYPE), mask=row_mask)
 
 
-def pack_routed_experts(moe: torch.nn.Module) -> PackedRoutedExperts:
+def pack_routed_experts(moe: torch.nn.Module, device: torch.device | str | None = None) -> PackedRoutedExperts:
     if getattr(moe, "ep_size", 1) != 1:
         raise NotImplementedError("pack_routed_experts currently only supports ep_size == 1")
 
@@ -171,7 +176,8 @@ def pack_routed_experts(moe: torch.nn.Module) -> PackedRoutedExperts:
         raise ValueError("No local routed experts found to pack")
 
     first_expert = experts[0]
-    device = first_expert.gate_proj.weight.device
+    if device is None:
+        device = first_expert.gate_proj.weight.device
     dtype = first_expert.gate_proj.weight.dtype
     hidden_size = int(first_expert.gate_proj.weight.shape[1])
     intermediate_size = int(first_expert.gate_proj.weight.shape[0])
@@ -203,6 +209,42 @@ def pack_routed_experts(moe: torch.nn.Module) -> PackedRoutedExperts:
     )
 
 
+def packed_routed_moe_eager(
+    x: torch.Tensor,
+    topk_ids: torch.Tensor,
+    topk_weight: torch.Tensor,
+    packed: PackedRoutedExperts,
+) -> torch.Tensor:
+    if packed.gate_up_weights.device != x.device or packed.down_weights.device != x.device:
+        packed.to(device=x.device)
+    output = torch.zeros((x.shape[0], packed.hidden_size), device=x.device, dtype=torch.float32)
+    for expert_id in range(packed.num_experts):
+        mask = topk_ids == expert_id
+        if not bool(mask.any()):
+            continue
+        token_idx, slot_idx = mask.nonzero(as_tuple=True)
+        expert_input = x[token_idx]
+        gate_up = torch.nn.functional.linear(expert_input, packed.gate_up_weights[expert_id])
+        gate, up = gate_up.split(packed.intermediate_size, dim=-1)
+        hidden = torch.nn.functional.silu(gate) * up
+        expert_output = torch.nn.functional.linear(hidden, packed.down_weights[expert_id])
+        weighted = expert_output.float() * topk_weight[token_idx, slot_idx].float().unsqueeze(-1)
+        output.index_add_(0, token_idx, weighted)
+    return output.to(dtype=x.dtype)
+
+
+def packed_routed_moe(
+    x: torch.Tensor,
+    topk_ids: torch.Tensor,
+    topk_weight: torch.Tensor,
+    packed: PackedRoutedExperts,
+    output_dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    if x.device.type == "cuda" and x.shape[0] == 1 and topk_ids.shape[0] == 1:
+        return grouped_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
+    return packed_routed_moe_eager(x, topk_ids, topk_weight, packed)
+
+
 def grouped_routed_moe(
     x: torch.Tensor,
     topk_ids: torch.Tensor,
@@ -221,6 +263,9 @@ def grouped_routed_moe(
         raise NotImplementedError("grouped_routed_moe requires CUDA")
     if packed.topk > 8:
         raise NotImplementedError(f"MAX_TOPK=8 kernel only, got topk={packed.topk}")
+
+    if packed.gate_up_weights.device != x.device or packed.down_weights.device != x.device:
+        packed.to(device=x.device)
 
     token = x[0].contiguous()
     routed_ids = topk_ids[0].to(torch.int32).contiguous()
