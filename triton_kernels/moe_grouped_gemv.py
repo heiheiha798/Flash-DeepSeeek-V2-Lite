@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+import triton
+import triton.language as tl
+
+
+@dataclass
+class PackedRoutedExperts:
+    # gate_up_weights: [num_experts, 2 * intermediate_size, hidden_size]
+    # down_weights:    [num_experts, hidden_size, intermediate_size]
+    gate_up_weights: torch.Tensor
+    down_weights: torch.Tensor
+    hidden_size: int
+    intermediate_size: int
+    num_experts: int
+    topk: int
+
+
+@triton.jit
+def _fused_gate_up_swiglu_kernel(
+    x_ptr,
+    topk_ids_ptr,
+    gate_up_ptr,
+    hidden_ptr,
+    num_rows,
+    hidden_size,
+    intermediate_size,
+    gate_up_stride_e,
+    gate_up_stride_m,
+    gate_up_stride_k,
+    hidden_stride_e,
+    hidden_stride_m,
+    BLOCK_M: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    expert_idx = tl.program_id(0)
+    row_block_idx = tl.program_id(1)
+    row_start = row_block_idx * BLOCK_M
+    row_offsets = row_start + tl.arange(0, BLOCK_M)
+    row_mask = row_offsets < num_rows
+
+    expert_id = tl.load(topk_ids_ptr + expert_idx).to(tl.int32)
+    gate_up_base_ptr = gate_up_ptr + expert_id * gate_up_stride_e
+    k_offsets_base = tl.arange(0, BLOCK_K)
+    gate_up_acc = tl.zeros((2, BLOCK_M), dtype=tl.float32)
+    k_block = 0
+    while k_block * BLOCK_K < hidden_size:
+        k_start = k_block * BLOCK_K
+        k_offsets = k_start + k_offsets_base
+        k_mask = k_offsets < hidden_size
+        x = tl.load(x_ptr + k_offsets, mask=k_mask, other=0.0).to(tl.float32)
+
+        x_col = x[:, None]
+
+        gate_up_block_ptr = tl.make_block_ptr(
+            base=gate_up_base_ptr,
+            shape=(2 * intermediate_size, hidden_size),
+            strides=(gate_up_stride_m, gate_up_stride_k),
+            offsets=(row_start, k_start),
+            block_shape=(2 * BLOCK_M, BLOCK_K),
+            order=(1, 0),
+        )
+        gate_up_w = tl.load(gate_up_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+
+        gate_up_acc += tl.reshape(tl.dot(gate_up_w, x_col), (2, BLOCK_M))
+        k_block += 1
+
+    gate_up_rows = tl.arange(0, 2)[:, None]
+    gate_acc = tl.sum(tl.where(gate_up_rows == 0, gate_up_acc, 0.0), axis=0)
+    up_acc = tl.sum(tl.where(gate_up_rows == 1, gate_up_acc, 0.0), axis=0)
+    routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
+    hidden_ptrs = hidden_ptr + expert_idx * hidden_stride_e + row_offsets * hidden_stride_m
+    tl.store(hidden_ptrs, routed_hidden, mask=row_mask)
+
+
+@triton.jit
+def _down_partial_kernel(
+    hidden_ptr,
+    topk_ids_ptr,
+    down_ptr,
+    partial_ptr,
+    topk,
+    hidden_size,
+    intermediate_size,
+    down_stride_e,
+    down_stride_m,
+    down_stride_k,
+    hidden_stride_e,
+    hidden_stride_k,
+    partial_stride_e,
+    partial_stride_m,
+    BLOCK_M: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    slot_idx = tl.program_id(0)
+    row_block_idx = tl.program_id(1)
+
+    if slot_idx >= topk:
+        return
+
+    expert_id = tl.load(topk_ids_ptr + slot_idx).to(tl.int32)
+    row_offsets = row_block_idx * BLOCK_M + tl.arange(0, BLOCK_M)
+    row_mask = row_offsets < hidden_size
+    k_offsets_base = tl.arange(0, BLOCK_K)
+    acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+
+    k_block = 0
+    while k_block * BLOCK_K < intermediate_size:
+        k_offsets = k_block * BLOCK_K + k_offsets_base
+        k_mask = k_offsets < intermediate_size
+        hidden = tl.load(
+            hidden_ptr + slot_idx * hidden_stride_e + k_offsets * hidden_stride_k,
+            mask=k_mask,
+            other=0.0,
+        ).to(tl.float32)
+        down_ptrs = (
+            down_ptr
+            + expert_id * down_stride_e
+            + row_offsets[:, None] * down_stride_m
+            + k_offsets[None, :] * down_stride_k
+        )
+        down_w = tl.load(down_ptrs, mask=row_mask[:, None] & k_mask[None, :], other=0.0).to(tl.float32)
+        acc += tl.sum(down_w * hidden[None, :], axis=1)
+        k_block += 1
+
+    tl.store(partial_ptr + slot_idx * partial_stride_e + row_offsets * partial_stride_m, acc, mask=row_mask)
+
+
+@triton.jit
+def _down_reduce_topk6_kernel(
+    partial_ptr,
+    topk_weight_ptr,
+    out_ptr,
+    hidden_size,
+    partial_stride_e,
+    partial_stride_m,
+    BLOCK_M: tl.constexpr,
+    OUT_DTYPE: tl.constexpr,
+):
+    row_block_idx = tl.program_id(0)
+    row_offsets = row_block_idx * BLOCK_M + tl.arange(0, BLOCK_M)
+    row_mask = row_offsets < hidden_size
+
+    w0 = tl.load(topk_weight_ptr + 0).to(tl.float32)
+    w1 = tl.load(topk_weight_ptr + 1).to(tl.float32)
+    w2 = tl.load(topk_weight_ptr + 2).to(tl.float32)
+    w3 = tl.load(topk_weight_ptr + 3).to(tl.float32)
+    w4 = tl.load(topk_weight_ptr + 4).to(tl.float32)
+    w5 = tl.load(topk_weight_ptr + 5).to(tl.float32)
+
+    p0 = tl.load(partial_ptr + 0 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+    p1 = tl.load(partial_ptr + 1 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+    p2 = tl.load(partial_ptr + 2 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+    p3 = tl.load(partial_ptr + 3 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+    p4 = tl.load(partial_ptr + 4 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+    p5 = tl.load(partial_ptr + 5 * partial_stride_e + row_offsets * partial_stride_m, mask=row_mask, other=0.0).to(tl.float32)
+
+    out = p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3 + p4 * w4 + p5 * w5
+    tl.store(out_ptr + row_offsets, out.to(OUT_DTYPE), mask=row_mask)
+
+
+def pack_routed_experts(moe: torch.nn.Module) -> PackedRoutedExperts:
+    if getattr(moe, "ep_size", 1) != 1:
+        raise NotImplementedError("pack_routed_experts currently only supports ep_size == 1")
+
+    experts = [expert for expert in moe.experts if expert is not None]
+    if not experts:
+        raise ValueError("No local routed experts found to pack")
+
+    first_expert = experts[0]
+    device = first_expert.gate_proj.weight.device
+    dtype = first_expert.gate_proj.weight.dtype
+    hidden_size = int(first_expert.gate_proj.weight.shape[1])
+    intermediate_size = int(first_expert.gate_proj.weight.shape[0])
+    num_experts = len(experts)
+    topk = int(moe.num_experts_per_tok)
+
+    gate_up_weights = torch.empty(
+        (num_experts, 2 * intermediate_size, hidden_size),
+        device=device,
+        dtype=dtype,
+    )
+    down_weights = torch.empty(
+        (num_experts, hidden_size, intermediate_size),
+        device=device,
+        dtype=dtype,
+    )
+    for expert_idx, expert in enumerate(experts):
+        gate_up_weights[expert_idx, :intermediate_size].copy_(expert.gate_proj.weight)
+        gate_up_weights[expert_idx, intermediate_size:].copy_(expert.up_proj.weight)
+        down_weights[expert_idx].copy_(expert.down_proj.weight)
+
+    return PackedRoutedExperts(
+        gate_up_weights=gate_up_weights,
+        down_weights=down_weights,
+        hidden_size=hidden_size,
+        intermediate_size=intermediate_size,
+        num_experts=num_experts,
+        topk=topk,
+    )
+
+
+def grouped_routed_moe(
+    x: torch.Tensor,
+    topk_ids: torch.Tensor,
+    topk_weight: torch.Tensor,
+    packed: PackedRoutedExperts,
+    output_dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    # decode-only specialization: x=[1, hidden], topk ids=[1, topk]
+    if x.ndim != 2 or x.shape[0] != 1:
+        raise NotImplementedError("grouped_routed_moe only supports single-token decode")
+    if topk_ids.ndim != 2 or topk_ids.shape[0] != 1:
+        raise NotImplementedError("topk_ids must have shape [1, topk]")
+    if topk_ids.shape[1] != packed.topk:
+        raise ValueError(f"Expected topk={packed.topk}, got {topk_ids.shape[1]}")
+    if x.device.type != "cuda":
+        raise NotImplementedError("grouped_routed_moe requires CUDA")
+    if packed.topk > 8:
+        raise NotImplementedError(f"MAX_TOPK=8 kernel only, got topk={packed.topk}")
+
+    token = x[0].contiguous()
+    routed_ids = topk_ids[0].to(torch.int32).contiguous()
+    routed_weight = topk_weight[0].to(dtype=torch.float32).contiguous()
+
+    topk = int(routed_ids.shape[0])
+    hidden_size = packed.hidden_size
+    intermediate_size = packed.intermediate_size
+
+    block_m = 32
+    block_k = 128
+
+    routed_hidden = torch.empty(
+        (topk, intermediate_size),
+        device=x.device,
+        dtype=torch.float32,
+    )
+    if output_dtype is None:
+        output_dtype = x.dtype
+    partial = torch.empty((topk, hidden_size), device=x.device, dtype=torch.float32)
+    out = torch.empty((hidden_size,), device=x.device, dtype=output_dtype)
+
+    # Kernel1: gate/up GEMV + SiLU*mul
+    grid = (topk, triton.cdiv(intermediate_size, block_m))
+    _fused_gate_up_swiglu_kernel[grid](
+        token,
+        routed_ids,
+        packed.gate_up_weights,
+        routed_hidden,
+        intermediate_size,
+        hidden_size,
+        intermediate_size,
+        packed.gate_up_weights.stride(0),
+        packed.gate_up_weights.stride(1),
+        packed.gate_up_weights.stride(2),
+        routed_hidden.stride(0),
+        routed_hidden.stride(1),
+        BLOCK_M=block_m,
+        BLOCK_K=block_k,
+        num_warps=2,
+    )
+
+    # Kernel2: down GEMV per route, still parallel across topk slots.
+    grid = (topk, triton.cdiv(hidden_size, block_m))
+    _down_partial_kernel[grid](
+        routed_hidden,
+        routed_ids,
+        packed.down_weights,
+        partial,
+        topk,
+        hidden_size,
+        intermediate_size,
+        packed.down_weights.stride(0),
+        packed.down_weights.stride(1),
+        packed.down_weights.stride(2),
+        routed_hidden.stride(0),
+        routed_hidden.stride(1),
+        partial.stride(0),
+        partial.stride(1),
+        BLOCK_M=block_m,
+        BLOCK_K=block_k,
+        num_warps=2,
+    )
+
+    # Kernel3: deterministic route weight + topk reduction + final dtype store.
+    _down_reduce_topk6_kernel[(triton.cdiv(hidden_size, block_m),)](
+        partial,
+        routed_weight,
+        out,
+        hidden_size,
+        partial.stride(0),
+        partial.stride(1),
+        BLOCK_M=block_m,
+        OUT_DTYPE=tl.bfloat16 if output_dtype is torch.bfloat16 else tl.float32,
+        num_warps=2,
+    )
+    return out.unsqueeze(0)

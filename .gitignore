@@ -1,0 +1,7 @@
+build
+*.so
+*.egg-info/
+__pycache__/
+dist/
+nsys-reps
+ncu-reps
