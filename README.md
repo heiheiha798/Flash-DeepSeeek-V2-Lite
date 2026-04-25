@@ -72,6 +72,22 @@ For performance runs, check `nvidia-smi` first and do not run two GPU workloads
 on the same card. GPU3 has been the preferred card for final numbers, but GPU0
 is acceptable for relative micro comparisons when GPU3 is busy.
 
+## Results Visualization
+
+The current A100 batch-size sweep compares the custom `src/run.py` small and
+batch kernel families with SGLang, vLLM, and llama.cpp baselines.
+
+<div align="center">
+  <img src="docs/figures/batch_scaling.svg" alt="Batch-size throughput scaling" width="760">
+</div>
+
+GitHub or browser dark-mode processing may reduce the SVG contrast. If the plot
+looks unclear in the README, download `docs/figures/batch_scaling.svg` and view
+it locally.
+
+Detailed numeric tables and reproduction commands are maintained in
+`docs/third_party_baselines.md`.
+
 ## Profiling
 
 Node-level `nsys` profile:

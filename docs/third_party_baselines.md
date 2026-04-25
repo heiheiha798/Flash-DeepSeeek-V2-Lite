@@ -53,7 +53,9 @@ The third-party batch-size sweep below was rerun serially on physical GPU 3 on
 April 25, 2026. Shape is input length 24 and output length 100. Logs are under
 `/tmp/dsv2lite_a100_rerun_20260425_162309`.
 
-![Batch-size throughput scaling](figures/batch_scaling.svg)
+<div align="center">
+  <img src="figures/batch_scaling.svg" alt="Batch-size throughput scaling" width="760">
+</div>
 
 The plot includes the third-party baselines plus the custom Triton
 `src/run.py --kernel-family batch` and `--kernel-family small` paths.
