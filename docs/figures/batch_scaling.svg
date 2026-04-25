@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640" role="img">
-<title>Third-party batch-size throughput scaling</title>
-<desc>Log-log line chart comparing SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>
+<title>Batch-size throughput scaling</title>
+<desc>Log-log line chart comparing src/sota, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>
 <rect width="1080" height="640" fill="white" />
-<text x="540.0" y="32.0" text-anchor="middle" font-size="24" font-weight="700">Third-Party Batch Scaling</text>
+<text x="540.0" y="32.0" text-anchor="middle" font-size="24" font-weight="700">Batch Scaling</text>
 <text x="540.0" y="56.0" text-anchor="middle" font-size="14" fill="#555">DeepSeek-V2-Lite-Chat, RTX A6000 GPU2, input 24 tokens, output/decode 100 tokens</text>
 <line x1="92.0" y1="72" x2="92.0" y2="558" stroke="#e8e8e8" stroke-width="1" />
 <text x="92.0" y="586.0" text-anchor="middle" font-size="13" fill="#333">1</text>
@@ -39,6 +39,16 @@
 <rect x="92" y="72" width="708" height="486" fill="none" stroke="#222" stroke-width="1.2" />
 <text x="446.0" y="616.0" text-anchor="middle" font-size="16" fill="#111">Batch size / parallel sequences</text>
 <text x="24" y="315.0" text-anchor="middle" font-size="16" fill="#111" transform="rotate(-90 24 315.0)">Throughput (tok/s, log scale)</text>
+<polyline points="92.0,459.3 180.5,430.4 269.0,363.8 357.5,313.6 446.0,268.9 534.5,240.5 623.0,192.0 711.5,159.5 800.0,141.5" fill="none" stroke="#d62728" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,453.3 86.0,459.3 92.0,465.3 98.0,459.3" fill="#d62728" />
+<polygon points="180.5,424.4 174.5,430.4 180.5,436.4 186.5,430.4" fill="#d62728" />
+<polygon points="269.0,357.8 263.0,363.8 269.0,369.8 275.0,363.8" fill="#d62728" />
+<polygon points="357.5,307.6 351.5,313.6 357.5,319.6 363.5,313.6" fill="#d62728" />
+<polygon points="446.0,262.9 440.0,268.9 446.0,274.9 452.0,268.9" fill="#d62728" />
+<polygon points="534.5,234.5 528.5,240.5 534.5,246.5 540.5,240.5" fill="#d62728" />
+<polygon points="623.0,186.0 617.0,192.0 623.0,198.0 629.0,192.0" fill="#d62728" />
+<polygon points="711.5,153.5 705.5,159.5 711.5,165.5 717.5,159.5" fill="#d62728" />
+<polygon points="800.0,135.5 794.0,141.5 800.0,147.5 806.0,141.5" fill="#d62728" />
 <polyline points="92.0,480.2 180.5,446.8 269.0,415.5 357.5,378.1 446.0,335.1 534.5,282.9 623.0,233.2 711.5,201.1 800.0,143.4" fill="none" stroke="#1f77b4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
 <rect x="87.0" y="475.2" width="10" height="10" fill="#1f77b4" />
 <rect x="175.5" y="441.8" width="10" height="10" fill="#1f77b4" />
@@ -70,14 +80,17 @@
 <polygon points="711.5,226.9 705.5,232.9 711.5,238.9 717.5,232.9" fill="#9467bd" />
 <polygon points="800.0,213.4 794.0,219.4 800.0,225.4 806.0,219.4" fill="#9467bd" />
 <text x="844.0" y="82.0" font-size="16" font-weight="700" fill="#111">Backend</text>
-<line x1="844" y1="100.0" x2="878" y2="100.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
-<rect x="856.0" y="95.0" width="10" height="10" fill="#1f77b4" />
-<text x="890.0" y="105.0" font-size="14" fill="#111">SGLang (3388 tok/s @ bsz 256)</text>
-<line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#2ca02c" stroke-width="3" stroke-linecap="round" />
-<polygon points="861.0,148.0 855.0,159.0 867.0,159.0" fill="#2ca02c" />
-<text x="890.0" y="159.0" font-size="14" fill="#111">vLLM (2945 tok/s @ bsz 256)</text>
-<line x1="844" y1="208.0" x2="878" y2="208.0" stroke="#9467bd" stroke-width="3" stroke-linecap="round" />
-<polygon points="861.0,202.0 855.0,208.0 861.0,214.0 867.0,208.0" fill="#9467bd" />
-<text x="890.0" y="213.0" font-size="14" fill="#111">llama.cpp (1564 tok/s @ bsz 256)</text>
-<text x="844.0" y="606.0" font-size="12" fill="#666">all plotted third-party backends capped at bsz 256</text>
+<line x1="844" y1="100.0" x2="878" y2="100.0" stroke="#d62728" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,94.0 855.0,100.0 861.0,106.0 867.0,100.0" fill="#d62728" />
+<text x="890.0" y="105.0" font-size="14" fill="#111">src/sota (3451 tok/s @ bsz 256)</text>
+<line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
+<rect x="856.0" y="149.0" width="10" height="10" fill="#1f77b4" />
+<text x="890.0" y="159.0" font-size="14" fill="#111">SGLang (3388 tok/s @ bsz 256)</text>
+<line x1="844" y1="208.0" x2="878" y2="208.0" stroke="#2ca02c" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,202.0 855.0,213.0 867.0,213.0" fill="#2ca02c" />
+<text x="890.0" y="213.0" font-size="14" fill="#111">vLLM (2945 tok/s @ bsz 256)</text>
+<line x1="844" y1="262.0" x2="878" y2="262.0" stroke="#9467bd" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,256.0 855.0,262.0 861.0,268.0 867.0,262.0" fill="#9467bd" />
+<text x="890.0" y="267.0" font-size="14" fill="#111">llama.cpp (1564 tok/s @ bsz 256)</text>
+<text x="844.0" y="606.0" font-size="12" fill="#666">all plotted backends capped at bsz 256</text>
 </svg>

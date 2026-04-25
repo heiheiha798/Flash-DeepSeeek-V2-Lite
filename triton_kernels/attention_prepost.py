@@ -12,19 +12,28 @@ def _prepare_decode_inputs_kernel(
     position_ids_ptr,
     attention_mask_index_ptr,
     max_cache_len,
+    batch_size,
+    attn_stride_b,
+    attn_stride_s,
+    pos_ids_stride_b,
+    pos_ids_stride_s,
     BLOCK: tl.constexpr,
 ):
-    pid = tl.program_id(0)
+    batch_idx = tl.program_id(0)
+    pid = tl.program_id(1)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
     mask = offsets < max_cache_len
+
+    if batch_idx >= batch_size:
+        return
 
     pos = tl.load(pos_ptr).to(tl.int64)
     attn_index = tl.load(attention_mask_index_ptr + offsets, mask=mask, other=0).to(tl.int64)
     valid = attn_index <= pos
-    tl.store(attention_mask_ptr + offsets, valid.to(tl.int64), mask=mask)
+    tl.store(attention_mask_ptr + batch_idx * attn_stride_b + offsets * attn_stride_s, valid.to(tl.int64), mask=mask)
 
     if pid == 0:
-        tl.store(position_ids_ptr, pos)
+        tl.store(position_ids_ptr + batch_idx * pos_ids_stride_b + 0 * pos_ids_stride_s, pos)
 
 
 @triton.jit
@@ -148,24 +157,30 @@ def prepare_decode_inputs_triton(
         raise NotImplementedError("prepare_decode_inputs_triton requires CUDA tensors")
     if cache_position.numel() != 1:
         raise ValueError("cache_position must have one element")
-    if attention_mask.ndim != 2 or attention_mask.shape[0] != 1:
-        raise ValueError("attention_mask must have shape [1, max_cache_len]")
-    if position_ids.shape != (1, 1):
-        raise ValueError("position_ids must have shape [1, 1]")
+    if attention_mask.ndim != 2:
+        raise ValueError("attention_mask must have shape [batch, max_cache_len]")
+    if position_ids.ndim != 2 or position_ids.shape[0] != attention_mask.shape[0] or position_ids.shape[1] != 1:
+        raise ValueError("position_ids must have shape [batch, 1]")
     if attention_mask_index.ndim != 1 or attention_mask_index.shape[0] != attention_mask.shape[1]:
         raise ValueError("attention_mask_index must be 1D with length max_cache_len")
     if attention_mask.dtype != torch.long or position_ids.dtype != torch.long or attention_mask_index.dtype != torch.long:
         raise ValueError("prepare_decode_inputs_triton requires int64 tensors")
 
+    batch_size = int(attention_mask.shape[0])
     max_cache_len = int(attention_mask.shape[1])
     block = 256
-    grid = (triton.cdiv(max_cache_len, block),)
+    grid = (batch_size, triton.cdiv(max_cache_len, block))
     _prepare_decode_inputs_kernel[grid](
         cache_position,
-        attention_mask.view(-1),
-        position_ids.view(-1),
+        attention_mask,
+        position_ids,
         attention_mask_index,
         max_cache_len,
+        batch_size,
+        attention_mask.stride(0),
+        attention_mask.stride(1),
+        position_ids.stride(0),
+        position_ids.stride(1),
         BLOCK=block,
         num_warps=2,
     )

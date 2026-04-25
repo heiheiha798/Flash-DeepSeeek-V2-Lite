@@ -456,14 +456,16 @@ def _prefill_once(
 ) -> tuple[torch.Tensor, float]:
     _sync_cuda()
     prefill_start = time.perf_counter()
-    prefill_outputs = model(
+    prefill_outputs = model.model(
         input_ids=input_ids,
         attention_mask=torch.ones_like(input_ids),
         past_key_values=cache,
         use_cache=True,
         return_dict=False,
     )
-    first_token = _greedy_decode(prefill_outputs[0])
+    last_hidden = prefill_outputs[0][:, -1:, :]
+    logits = model.lm_head(last_hidden).float()
+    first_token = _greedy_decode(logits)
     _sync_cuda()
     return first_token, time.perf_counter() - prefill_start
 
@@ -523,9 +525,10 @@ def _run_graph_decode(
     batch_size = int(input_ids.shape[0])
     prompt_len = int(input_ids.shape[1])
     max_cache_len = prompt_len + max_new_tokens + 8
-    use_sota_graph = batch_size == 1
+    use_full_sota_attention = batch_size == 1
+    use_cuda_graph_decode = True
     graph_cache = GraphCache(num_layers=model.config.num_hidden_layers, max_cache_len=max_cache_len)
-    graph_cache.set_triton_cache_write(use_sota_graph)
+    graph_cache.set_triton_cache_write(use_full_sota_attention)
     _patch_rmsnorm_for_graph(model)
     _patch_mlp_elementwise_for_graph(model)
     _patch_attention_for_graph(model)
@@ -533,7 +536,7 @@ def _run_graph_decode(
 
     with torch.inference_mode():
         first_token, prefill_seconds = _prefill_once(model=model, input_ids=input_ids, cache=graph_cache)
-        prompt_snapshot = graph_cache.snapshot() if use_sota_graph else None
+        prompt_snapshot = graph_cache.snapshot()
         graph_cache.set_static_mode(True)
 
         collect_tokens = dump_token_ids or dump_step_trace
@@ -561,7 +564,7 @@ def _run_graph_decode(
             "next_token": torch.empty((batch_size, 1), dtype=torch.long, device=model_device),
         }
 
-        if use_sota_graph:
+        if use_cuda_graph_decode:
             for _ in range(GRAPH_WARMUP_STEPS):
                 graph_buffers["input_ids"].copy_(first_token)
                 graph_buffers["cache_position"].fill_(prompt_len)
@@ -572,7 +575,7 @@ def _run_graph_decode(
         graph_buffers["input_ids"].copy_(first_token)
         graph_buffers["cache_position"].fill_(prompt_len)
         graph = None
-        if use_sota_graph:
+        if use_cuda_graph_decode:
             graph = torch.cuda.CUDAGraph()
             _sync_cuda()
             with torch.cuda.graph(graph):
@@ -603,7 +606,7 @@ def _run_graph_decode(
 
     return {
         "batch_size": batch_size,
-        "path": "triton_sota_graph" if use_sota_graph else "batched_eager_fallback",
+        "path": "triton_sota_graph" if use_full_sota_attention else "batched_cuda_graph",
         "generated_ids": output_generated_ids,
         "decode_tokens": batch_size * max(max_new_tokens - 1, 0),
         "prefill_seconds": prefill_seconds,

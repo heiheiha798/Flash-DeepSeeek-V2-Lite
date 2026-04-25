@@ -55,6 +55,8 @@ April 25, 2026. Shape is input length 24 and output length 100. Logs are under
 
 ![Batch-size throughput scaling](figures/batch_scaling.svg)
 
+The plot includes the third-party baselines and the current `src/sota` custom Triton path.
+
 | Batch | SGLang decode tok/s | vLLM output tok/s | llama.cpp batched tg tok/s |
 | ---: | ---: | ---: | ---: |
 | 1 | 110.26 | 67.13 | 99.92 |
@@ -72,6 +74,31 @@ Notes:
 - SGLang values are `median_decode_throughput` from `bench_one_batch` JSONL with `--cuda-graph-bs` matching batch size.
 - vLLM values are `batch_size * output_len / Avg latency` from `vllm bench latency`; this includes prefill plus decode for the request batch, so it is not exactly equivalent to SGLang decode-only median. The attempted `batch_size=512` run is excluded because vLLM scheduled it as two 256-request waves (`Running: 256 reqs, Waiting: 256 reqs`), so it was not a valid bsz=512 measurement.
 - llama.cpp values are from `llama-batched-bench -npl`, i.e. real parallel sequences. The tool refused `npl=512` with `n_seq_max must be <= 256`, so the valid llama.cpp curve stops at 256.
+
+
+## src/sota Batch Sweep
+
+The current custom Triton path was rerun on physical GPU 2 on April 25, 2026
+after changing batched MoE from per-route GEMV to expert-grouped GEMM-style
+Triton kernels. Shape is input length 24 and output length 100. Logs are under
+`/tmp/dsv2lite_grouped_sweep_20260425_101935`.
+
+| Batch | Path | Decode tok/s |
+| ---: | --- | ---: |
+| 1 | `triton_sota_graph` | 136.36 |
+| 2 | `batched_cuda_graph` | 183.00 |
+| 4 | `batched_cuda_graph` | 360.15 |
+| 8 | `batched_cuda_graph` | 600.38 |
+| 16 | `batched_cuda_graph` | 945.53 |
+| 32 | `batched_cuda_graph` | 1262.38 |
+| 64 | `batched_cuda_graph` | 2066.46 |
+| 128 | `batched_cuda_graph` | 2876.35 |
+| 256 | `batched_cuda_graph` | 3451.47 |
+| 512 | — | OOM during `graph_cache.snapshot()` |
+
+Note: after grouped MoE, 256 now runs successfully. The 512 run still fails
+while cloning the prompt KV cache snapshot, with the process using essentially
+the full 47.40 GiB A6000 memory.
 
 ## Reproduction Commands
 

@@ -7,6 +7,17 @@ from pathlib import Path
 
 BATCHES = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 SERIES = {
+    "src/sota": {
+        1: 136.36,
+        2: 183.00,
+        4: 360.15,
+        8: 600.38,
+        16: 945.53,
+        32: 1262.38,
+        64: 2066.46,
+        128: 2876.35,
+        256: 3451.47,
+    },
     "SGLang": {
         1: 110.26,
         2: 154.86,
@@ -42,11 +53,13 @@ SERIES = {
     },
 }
 COLORS = {
+    "src/sota": "#d62728",
     "SGLang": "#1f77b4",
     "vLLM": "#2ca02c",
     "llama.cpp": "#9467bd",
 }
 MARKERS = {
+    "src/sota": "circle",
     "SGLang": "square",
     "vLLM": "triangle",
     "llama.cpp": "diamond",
@@ -96,7 +109,7 @@ def build_svg() -> str:
     y_ticks = [50, 100, 200, 500, 1000, 2000, 5000]
     elements: list[str] = []
     elements.append(f'<rect width="{WIDTH}" height="{HEIGHT}" fill="white" />')
-    elements.append(text(WIDTH / 2, 32, "Third-Party Batch Scaling", text_anchor="middle", font_size="24", font_weight="700"))
+    elements.append(text(WIDTH / 2, 32, "Batch Scaling", text_anchor="middle", font_size="24", font_weight="700"))
     elements.append(text(WIDTH / 2, 56, "DeepSeek-V2-Lite-Chat, RTX A6000 GPU2, input 24 tokens, output/decode 100 tokens", text_anchor="middle", font_size="14", fill="#555"))
 
     for batch in BATCHES:
@@ -134,12 +147,12 @@ def build_svg() -> str:
         elements.append(text(legend_x + 46, y + 5, label + suffix, font_size="14", fill="#111"))
 
     note_y = HEIGHT - 34
-    elements.append(text(LEFT + PLOT_W + 44, note_y, "all plotted third-party backends capped at bsz 256", font_size="12", fill="#666"))
+    elements.append(text(LEFT + PLOT_W + 44, note_y, "all plotted backends capped at bsz 256", font_size="12", fill="#666"))
 
     return "\n".join([
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img">',
-        "<title>Third-party batch-size throughput scaling</title>",
-        "<desc>Log-log line chart comparing SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>",
+        "<title>Batch-size throughput scaling</title>",
+        "<desc>Log-log line chart comparing src/sota, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>",
         *elements,
         "</svg>",
         "",
