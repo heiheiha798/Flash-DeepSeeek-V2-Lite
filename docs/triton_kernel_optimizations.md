@@ -514,11 +514,13 @@ cache write, decode attention, and o-proj into Triton kernels. The routed MoE
 path now uses the same expert-grouped batched implementation for all batch sizes
 and applies shape-keyed tile autotuning over the same grouped kernels.
 
-This is an explicit batching tradeoff: batch scaling improves substantially, but
-`bsz=1` loses the old single-token-specialized fast path. The previous `bsz=1`
-reference was about 136 tok/s; the current unified path measures about 145 tok/s
-on NVIDIA A100 80GB PCIe GPU3. Larger batches improve significantly, with the
-current 100-token sweep reaching 9396 tok/s at `bsz=256`.
+The target is a unified batched implementation that remains efficient at
+`bsz=1`, not a return to a separate single-token-only decode path. The current
+implementation improves batch scaling substantially, but profiling shows the
+`bsz=1` regression is inside the generalized Triton kernels themselves: large
+batch-oriented tiles and MoE route grouping are applied even when the active
+batch dimension is one. See `docs/batched_decode_profile_analysis.md` for the
+A100 `nsys`/`ncu` breakdown and the shape-adaptive kernel direction.
 
 Validated on NVIDIA A100 80GB PCIe GPU3 with input length 24 and
 `max_new_tokens=100`:
