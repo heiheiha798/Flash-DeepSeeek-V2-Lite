@@ -80,20 +80,20 @@ Notes:
 
 The current custom Triton path was rerun on physical GPU 2 on April 25, 2026
 after changing batched MoE from per-route GEMV to expert-grouped GEMM-style
-Triton kernels. Shape is input length 24 and output length 100. Logs are under
-`/tmp/dsv2lite_grouped_sweep_20260425_101935`.
+Triton kernels and adding a batched q_len=1 Triton decode-attention kernel. Shape is input length 24 and output length 100. Logs are under
+`/tmp/dsv2lite_attn_opt_sweep_20260425_130635`.
 
 | Batch | Path | Decode tok/s |
 | ---: | --- | ---: |
-| 1 | `triton_sota_graph` | 136.36 |
-| 2 | `batched_cuda_graph` | 183.00 |
-| 4 | `batched_cuda_graph` | 360.15 |
-| 8 | `batched_cuda_graph` | 600.38 |
-| 16 | `batched_cuda_graph` | 945.53 |
-| 32 | `batched_cuda_graph` | 1262.38 |
-| 64 | `batched_cuda_graph` | 2066.46 |
-| 128 | `batched_cuda_graph` | 2876.35 |
-| 256 | `batched_cuda_graph` | 3451.47 |
+| 1 | `triton_sota_graph` | 136.77 |
+| 2 | `batched_cuda_graph` | 187.20 |
+| 4 | `batched_cuda_graph` | 371.52 |
+| 8 | `batched_cuda_graph` | 507.24 |
+| 16 | `batched_cuda_graph` | 1196.57 |
+| 32 | `batched_cuda_graph` | 1397.72 |
+| 64 | `batched_cuda_graph` | 2284.81 |
+| 128 | `batched_cuda_graph` | 3160.33 |
+| 256 | `batched_cuda_graph` | 3775.20 |
 | 512 | — | OOM during `graph_cache.snapshot()` |
 
 Note: after grouped MoE, 256 now runs successfully. The 512 run still fails

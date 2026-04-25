@@ -648,3 +648,168 @@ def attention_decode_only_triton(
     o_out = workspace.o_out
     _run_gemv_o_proj_2048(x=workspace.attn_ctx_flat, w=packed.o_weight, out=o_out)
     return o_out.view(1, 1, DSV2L_HIDDEN)
+
+
+@triton.jit
+def _batched_decode_attention_q1_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    pos_ptr,
+    out_ptr,
+    q_dim,
+    v_dim,
+    q_stride_b,
+    q_stride_h,
+    q_stride_s,
+    q_stride_d,
+    k_stride_b,
+    k_stride_h,
+    k_stride_s,
+    k_stride_d,
+    v_stride_b,
+    v_stride_h,
+    v_stride_s,
+    v_stride_d,
+    out_stride_b,
+    out_stride_h,
+    out_stride_s,
+    out_stride_d,
+    scale,
+    BLOCK_N: tl.constexpr,
+    BLOCK_Q: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
+    batch_idx = tl.program_id(0)
+    head_idx = tl.program_id(1)
+    v_block = tl.program_id(2)
+
+    v_offsets = v_block * BLOCK_V + tl.arange(0, BLOCK_V)
+    v_mask = v_offsets < v_dim
+
+    m_i = tl.full((1,), -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros((1,), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_V,), dtype=tl.float32)
+    pos = tl.load(pos_ptr).to(tl.int32)
+
+    n_start = 0
+    while n_start <= pos:
+        n_offsets = n_start + tl.arange(0, BLOCK_N)
+        n_valid = n_offsets <= pos
+        logits = tl.zeros((BLOCK_N,), dtype=tl.float32)
+
+        q_start = 0
+        while q_start < q_dim:
+            q_offsets = q_start + tl.arange(0, BLOCK_Q)
+            q_mask = q_offsets < q_dim
+            q_vec = tl.load(
+                q_ptr
+                + batch_idx * q_stride_b
+                + head_idx * q_stride_h
+                + 0 * q_stride_s
+                + q_offsets * q_stride_d,
+                mask=q_mask,
+                other=0.0,
+            ).to(tl.float32)
+            k_block = tl.load(
+                k_ptr
+                + batch_idx * k_stride_b
+                + head_idx * k_stride_h
+                + n_offsets[:, None] * k_stride_s
+                + q_offsets[None, :] * k_stride_d,
+                mask=n_valid[:, None] & q_mask[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            logits += tl.reshape(tl.dot(k_block, q_vec[:, None]), (BLOCK_N,))
+            q_start += BLOCK_Q
+
+        logits = tl.where(n_valid, logits * scale, -float("inf"))
+        m_ij = tl.max(logits, axis=0)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(logits - m_new)
+
+        v_block_data = tl.load(
+            v_ptr
+            + batch_idx * v_stride_b
+            + head_idx * v_stride_h
+            + n_offsets[:, None] * v_stride_s
+            + v_offsets[None, :] * v_stride_d,
+            mask=n_valid[:, None] & v_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        acc = acc * alpha + tl.sum(p[:, None] * v_block_data, axis=0)
+        l_i = l_i * alpha + tl.sum(p, axis=0)
+        m_i = m_new
+        n_start += BLOCK_N
+
+    out = acc / l_i
+    tl.store(
+        out_ptr
+        + batch_idx * out_stride_b
+        + head_idx * out_stride_h
+        + 0 * out_stride_s
+        + v_offsets * out_stride_d,
+        out.to(tl.bfloat16),
+        mask=v_mask,
+    )
+
+
+def batched_attention_decode_q1_triton(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    cache_position: torch.Tensor,
+    softmax_scale: float,
+) -> torch.Tensor:
+    if query_states.device.type != "cuda":
+        raise NotImplementedError("batched_attention_decode_q1_triton requires CUDA tensors")
+    if query_states.dtype != torch.bfloat16 or key_states.dtype != torch.bfloat16 or value_states.dtype != torch.bfloat16:
+        raise NotImplementedError("batched_attention_decode_q1_triton supports bf16 only")
+    if query_states.ndim != 4 or key_states.ndim != 4 or value_states.ndim != 4:
+        raise ValueError("query/key/value states must be rank-4 tensors")
+    if query_states.shape[2] != 1:
+        raise ValueError("batched_attention_decode_q1_triton only supports q_len=1")
+    if cache_position.numel() != 1 or cache_position.dtype != torch.long:
+        raise ValueError("cache_position must be CUDA int64 tensor with one element")
+
+    batch_size = int(query_states.shape[0])
+    num_heads = int(query_states.shape[1])
+    q_dim = int(query_states.shape[3])
+    v_dim = int(value_states.shape[3])
+    out = torch.empty(
+        (batch_size, num_heads, 1, v_dim),
+        device=query_states.device,
+        dtype=query_states.dtype,
+    )
+    _batched_decode_attention_q1_kernel[(batch_size, num_heads, triton.cdiv(v_dim, 128))](
+        query_states,
+        key_states,
+        value_states,
+        cache_position.view(-1),
+        out,
+        q_dim,
+        v_dim,
+        query_states.stride(0),
+        query_states.stride(1),
+        query_states.stride(2),
+        query_states.stride(3),
+        key_states.stride(0),
+        key_states.stride(1),
+        key_states.stride(2),
+        key_states.stride(3),
+        value_states.stride(0),
+        value_states.stride(1),
+        value_states.stride(2),
+        value_states.stride(3),
+        out.stride(0),
+        out.stride(1),
+        out.stride(2),
+        out.stride(3),
+        float(softmax_scale),
+        BLOCK_N=32,
+        BLOCK_Q=64,
+        BLOCK_V=128,
+        num_warps=4,
+    )
+    return out
