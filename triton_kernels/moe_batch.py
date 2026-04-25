@@ -99,6 +99,14 @@ def _zero_i32_kernel(ptr, n_elements, BLOCK: tl.constexpr):
 
 
 @triton.jit
+def _zero_counts_and_block_count_kernel(counts_ptr, block_count_ptr, n_elements, BLOCK: tl.constexpr):
+    offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    tl.store(counts_ptr + offsets, tl.zeros((BLOCK,), dtype=tl.int32), mask=offsets < n_elements)
+    if tl.program_id(0) == 0:
+        tl.store(block_count_ptr, tl.full((), 0, dtype=tl.int32))
+
+
+@triton.jit
 def _zero_fp32_kernel(ptr, n_elements, BLOCK: tl.constexpr):
     offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     tl.store(ptr + offsets, tl.zeros((BLOCK,), dtype=tl.float32), mask=offsets < n_elements)
@@ -485,8 +493,9 @@ def _run_batched_grouped_routed_moe_grouped_triton(
     gate_up_weights = packed.gate_up_weights
     down_weights = packed.down_weights
 
-    _zero_i32_kernel[(triton.cdiv(packed.num_experts + 1, 256),)](counts, packed.num_experts, BLOCK=256, num_warps=4)
-    _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
+    _zero_counts_and_block_count_kernel[(triton.cdiv(packed.num_experts, 256),)](
+        counts, block_count, packed.num_experts, BLOCK=256, num_warps=4
+    )
     _build_route_indices_kernel[(total_routes,)](
         topk_ids,
         counts,
@@ -531,15 +540,16 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         COMBINE_GATE_UP=_combine_gate_up_dot(),
         num_warps=4,
     )
-    _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
-    _build_route_blocks_kernel[(packed.num_experts,)](
-        counts,
-        block_count,
-        block_experts,
-        block_offsets,
-        BLOCK_N=down_block_n,
-        num_warps=1,
-    )
+    if gate_block_n != down_block_n:
+        _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
+        _build_route_blocks_kernel[(packed.num_experts,)](
+            counts,
+            block_count,
+            block_experts,
+            block_offsets,
+            BLOCK_N=down_block_n,
+            num_warps=1,
+        )
     _grouped_down_partial_kernel[(down_max_blocks, triton.cdiv(hidden_size, down_block_m))](
         routed_hidden,
         down_weights,

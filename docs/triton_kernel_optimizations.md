@@ -593,3 +593,43 @@ End-to-end fixed-tile comparison on A100 GPU3:
 Conclusion: this is a low-risk structural optimization. It does not change the
 math or tile shape; it only avoids launching CTAs that are guaranteed to return
 immediately.
+
+## Batch MoE Metadata Kernel Cleanup
+
+A follow-up free-lunch review found two additional metadata cleanups in the same
+grouped MoE path:
+
+- When gate/up and down use the same `BLOCK_N`, reuse the route block list
+  built before gate/up instead of clearing `block_count` and rebuilding it before
+  down.
+- Fuse the initial `counts` zero and `block_count` zero into one metadata
+  kernel.
+
+These changes do not alter the mathematical kernels or tile choices. The
+fallback path still rebuilds route blocks if gate/up and down use different
+`BLOCK_N` values.
+
+Short `nsys --cuda-graph-trace=node` profile at `bsz=256`,
+`max_new_tokens=20`:
+
+| Change point | Before | After |
+| --- | ---: | ---: |
+| total kernel instances | 22,149 | 21,431 |
+| `_build_route_blocks_kernel` instances | 718 | 718 |
+| zero metadata kernel instances | 1,436 `_zero_i32_kernel` | 718 `_zero_counts_and_block_count_kernel` |
+
+The route-block reuse was already included in the "after" count above: one
+`_build_route_blocks_kernel` remains per MoE layer invocation instead of two.
+The zero fusion removes one additional tiny metadata launch per invocation.
+
+End-to-end `bsz=256`, `max_new_tokens=100` after this cleanup measured
+`9789.83` decode TPS on A100 GPU3. The small TPS delta is close to run-to-run
+noise, but the kernel-count reduction is deterministic and low risk.
+
+Also tested and reverted during this review:
+
+- Direct-writing batch attention output into `workspace.attn_ctx`.
+- Adding an optional output tensor to RMSNorm for `kv_lora_norm`.
+
+Those changes did not reduce visible kernel counts in `nsys`, so they were not
+kept.
