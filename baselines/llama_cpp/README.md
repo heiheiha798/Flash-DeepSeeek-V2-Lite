@@ -65,12 +65,11 @@ Default benchmark shape:
 - llama.cpp FlashAttention: `on`
 - eval batch / micro-batch: `BATCH_SIZE=2048`, `UBATCH_SIZE=512` in the single-run script
 
-Latest observed A100 GPU3 `llama-batched-bench -npl` batch-size sweep result:
+Latest observed A100 `llama-batched-bench -npl` batch-size sweep result:
 
 ```text
 bsz=1 tg100:   137.01 tok/s
 bsz=256 tg100: 2051.89 tok/s
-log: /tmp/dsv2lite_a100_rerun_20260425_162309/llama_cpp/llama_batched_bench_npl_1_2_4_8_16_32_64_128_256.jsonl
 hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: llama.cpp CUDA build with CUDA graphs and GGML CUDA FlashAttention
 ```

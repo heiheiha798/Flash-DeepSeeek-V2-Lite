@@ -1,7 +1,7 @@
 # Third-Party Baselines
 
-This note records the reproducible third-party baseline setup for
-`DeepSeek-V2-Lite-Chat` downloaded from ModelScope.
+This note records the third-party comparison setup for the independent Triton
+`DeepSeek-V2-Lite-Chat` decode kernels in this repository.
 
 ## Model Artifacts
 
@@ -22,14 +22,14 @@ The baseline wrappers default to these local paths and can be overridden with
 ## Single-Batch Decode Results
 
 All results below use NVIDIA A100 80GB PCIe, batch size 1, input length 24,
-output length 100, BF16/F16 weights as supported by each backend, and physical
-GPU 3 when rerun.
+output length 100, BF16/F16 weights as supported by each backend, and one idle
+A100 80GB PCIe GPU.
 
-| Backend | Command shape | Decode TPS | Log |
-| --- | --- | ---: | --- |
-| SGLang 0.5.9 | `bench_one_batch --batch-size 1 --input-len 24 --output-len 100 --cuda-graph-bs 1` | 165.16 tok/s | `/tmp/dsv2lite_a100_rerun_20260425_162309/sglang/bs1.jsonl` |
-| vLLM 0.16.0 | `vllm bench latency --batch-size 1 --input-len 24 --output-len 100 --cudagraph-capture-sizes 1` | 78.44 tok/s | `/tmp/dsv2lite_a100_rerun_20260425_162309/vllm/bs1.log` |
-| llama.cpp | `llama-batched-bench -npp 24 -ntg 100 -npl 1 -ngl 99 -fa on` | 137.01 tok/s | `/tmp/dsv2lite_a100_rerun_20260425_162309/llama_cpp/llama_batched_bench_npl_1_2_4_8_16_32_64_128_256.jsonl` |
+| Backend | Command shape | Decode TPS |
+| --- | --- | ---: |
+| SGLang 0.5.9 | `bench_one_batch --batch-size 1 --input-len 24 --output-len 100 --cuda-graph-bs 1` | 165.16 tok/s |
+| vLLM 0.16.0 | `vllm bench latency --batch-size 1 --input-len 24 --output-len 100 --cudagraph-capture-sizes 1` | 78.44 tok/s |
+| llama.cpp | `llama-batched-bench -npp 24 -ntg 100 -npl 1 -ngl 99 -fa on` | 137.01 tok/s |
 
 ## SGLang Notes
 
@@ -49,9 +49,8 @@ those configs with SGLang's fused MoE benchmark tools, SGLang may improve.
 
 ## Batch-Size Sweep Results
 
-The third-party batch-size sweep below was rerun serially on physical GPU 3 on
-April 25, 2026. Shape is input length 24 and output length 100. Logs are under
-`/tmp/dsv2lite_a100_rerun_20260425_162309`.
+The third-party batch-size sweep below was rerun serially on one idle A100 80GB
+PCIe GPU on April 25, 2026. Shape is input length 24 and output length 100.
 
 <div align="center">
   <img src="figures/batch_scaling.svg" alt="Batch-size throughput scaling" width="760">
@@ -81,14 +80,12 @@ Notes:
 
 ## src Batch Sweep
 
-The current custom Triton path was rerun on physical GPU 3 on April 25, 2026
+The current custom Triton path was rerun on one idle A100 80GB PCIe GPU on April 25, 2026
 after the batch attention linear tile update, and the small-GEMV curve was
 refreshed on April 26, 2026 after restoring combined gate/up dot in the small
-MoE kernels. Shape is input length 24 and output length 100. Batch-kernel logs
-are under `/tmp/dsv2lite_src_rerun_20260425_232359`; refreshed small-GEMV logs
-are under `/tmp/dsv2lite_small_combined_all_20260426_000346`. The table compares
-two forced dispatch modes: batching kernels for every batch size, and
-small-GEMV kernels for every measured batch size.
+MoE kernels. Shape is input length 24 and output length 100. The table compares
+two forced dispatch modes: batching kernels for every batch size, and small-GEMV
+kernels for every measured batch size.
 
 | Batch | Forced batching tok/s | Forced small-GEMV tok/s |
 | ---: | ---: | ---: |
@@ -105,14 +102,18 @@ small-GEMV kernels for every measured batch size.
 Note: all plotted backends are capped at batch size 256. The earlier 512 point
 is intentionally excluded from the plot and table.
 
-The plotted `src/small GEMV` series is diagnostic. It runs the `bsz=1`-template
-GEMV family through `B=256` to compare a distinct kernel implementation method
-against full batching kernels; it is not presented as the final dispatch policy.
+The plotted `src/small GEMV` series is diagnostic. It is the GEMV-oriented
+family derived from the `bsz=1` execution template, so it represents the
+low-batch / `bsz=1` optimized direction. The `src/batch` series is the grouped
+batching family, optimized to amortize expert routing and weight reads at
+larger batch sizes. Both are swept through `B=256` to compare kernel design
+tradeoffs directly; the plot is not presented as a hidden automatic dispatch
+policy.
 
 ## Reproduction Commands
 
 ```bash
-RUN_DIR=/tmp/dsv2lite_a100_rerun_20260425_162309
+RUN_DIR=<run-dir>
 mkdir -p "${RUN_DIR}"
 
 RESULT_DIR="${RUN_DIR}/sglang" GPU=3 MODEL_PATH=/data/models/DeepSeek-V2-Lite-Chat BATCH_SIZES="1 2 4 8 16 32 64 128 256" \
@@ -137,9 +138,6 @@ CUDA_VISIBLE_DEVICES=3 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
   2>&1 | tee "${RUN_DIR}/src_small_gemv_sweep.log"
 ```
 
-The refreshed `src/run.py` logs for the current table used:
-
-```bash
-RUN_DIR=/tmp/dsv2lite_src_rerun_20260425_232359
-SMALL_RUN_DIR=/tmp/dsv2lite_small_combined_all_20260426_000346
-```
+Use the same batch-size list for `--kernel-family small` and
+`--kernel-family batch` when refreshing the table, so the plotted curves remain
+directly comparable.

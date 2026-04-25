@@ -66,12 +66,11 @@ Default benchmark shape:
 - dtype: `bfloat16`
 - CUDA graph batch sizes: `BATCH_SIZE` in the sweep, `1` in the single-batch default
 
-Latest observed A100 GPU3 decode result:
+Latest observed A100 decode result:
 
 ```text
 median decode latency: 0.00605 s
 decode TPS: 165.16 tok/s
-log: /tmp/dsv2lite_a100_rerun_20260425_162309/sglang/bs1.jsonl
 hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: torch 2.9.1+cu130, triton 3.5.1, sglang 0.5.9, flash_attn 2.8.3
 ```

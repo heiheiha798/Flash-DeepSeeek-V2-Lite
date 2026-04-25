@@ -14,20 +14,10 @@ tile shape or one fixed route-grouping policy for every batch size.
 
 ## Profile Setup
 
-- GPU: NVIDIA A100 80GB PCIe GPU3
+- GPU: one idle NVIDIA A100 80GB PCIe GPU
 - Current runner: `src/run.py --kernel-family batch|small`
-- Current profiles:
-  - `nsys-reps/sota_bsz64_a100_node.nsys-rep`
-  - `nsys-reps/sota_bsz128_a100_node.nsys-rep`
-  - `nsys-reps/sota_bsz256_a100_node.nsys-rep`
-  - `nsys-reps/sota_bsz1_unified_a100_node.nsys-rep`
-- Historical comparison profile:
-  - `nsys-reps/sota_bsz1_fc39f1f_a100_node.nsys-rep`
-- NCU reports:
-  - `ncu-reps/grouped_gate_up_bsz256_metrics.ncu-rep`
-  - `ncu-reps/grouped_down_bsz256_metrics.ncu-rep`
-  - `ncu-reps/attention_decode_bsz256_metrics.ncu-rep`
-  - `ncu-reps/batched_linear_bsz256_metrics.ncu-rep`
+- Profile method: node-level `nsys` for end-to-end graph timing and `ncu`
+  for representative hot kernels.
 
 ## Batch Scaling At 128 And 256
 
@@ -267,7 +257,7 @@ Evaluated but not enabled:
   under the current graph/warmup/workspace behavior. The active path therefore
   keeps the grouped batched MoE kernels.
 
-A100 GPU3, `max_new_tokens=100`, input length 24:
+A100, `max_new_tokens=100`, input length 24:
 
 | Batch | Previous TPS | New TPS | Change |
 | ---: | ---: | ---: | ---: |
@@ -335,7 +325,7 @@ The small-GEMV family in this run includes:
   kernels. This deliberately follows the `bsz=1` implementation template and
   does not use grouped batching GEMM kernels.
 
-A100 GPU3, `max_new_tokens=100`, input length 24:
+A100, `max_new_tokens=100`, input length 24:
 
 | Batch | Batching TPS | Forced small-GEMV TPS | Result |
 | ---: | ---: | ---: | --- |

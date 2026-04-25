@@ -1,13 +1,14 @@
 # HF Profile Summary
 
-本文档记录早期 `DeepSeek-V2-Lite-Chat` baseline 与 Triton SOTA 路径的
-profile 结论。当前活跃入口已收敛为 `src/run.py --kernel-family
-small|batch`；本文保留作为历史 profile 参考。
+本文档是早期 `DeepSeek-V2-Lite-Chat` CUDA graph 与 Triton kernel 实验的
+归档 profile 记录。当前活跃入口已收敛为
+`src/run.py --kernel-family small|batch`；新结论应优先维护在
+`docs/triton_kernel_optimizations.md` 和 `docs/third_party_baselines.md`。
 
-当前主线：
+当前主线已经收敛为：
 
-- HF decode-only CUDA graph baseline
-- DeepSeek-V2-Lite 专用 Triton kernel 优化
+- `src/run.py --kernel-family small`
+- `src/run.py --kernel-family batch`
 - `nsys` / `ncu` 数据驱动优化
 
 ## 实验对象
@@ -22,7 +23,6 @@ small|batch`；本文保留作为历史 profile 参考。
 - GPU：`NVIDIA A100 80GB PCIe / SM80`
 - CPU：`INTEL(R) XEON(R) PLATINUM 8558P`, `96C/192T`, `503.53 GiB RAM`
 - 软件：`Python 3.10.20`, `torch 2.10.0+cu130`, `torch CUDA 13.0`, `triton 3.6.0`, `transformers 4.57.6`
-- 性能测试优先 `GPU3`
 - dtype：`bf16`
 
 默认推理口径：
@@ -32,12 +32,12 @@ small|batch`；本文保留作为历史 profile 参考。
 - batch：`1`
 - decode：`q_len=1`
 
-主要脚本：
+历史脚本：
 
-- `src/baseline.py`：当前 HF decode-only CUDA graph baseline
-- `src/sota.py`：当前 Triton SOTA 路径
+- `src/baseline.py`：早期 HF decode-only CUDA graph baseline。
+- `src/sota.py`：早期 Triton 优化路径，后续已收敛进 `src/run.py`。
 
-## 当前 SOTA Profile 快照
+## 早期 Triton Profile 快照
 
 命令：
 
@@ -51,11 +51,6 @@ CUDA_VISIBLE_DEVICES=3 /data/home/tianjianyang/.conda/envs/flashmla/bin/python s
 - 当前稳定档位约 `195+ TPS`
 - 硬件：`NVIDIA A100 80GB PCIe`, `sm80`, `80 GB`; `INTEL(R) XEON(R) PLATINUM 8558P`, `96C/192T`, `503.53 GiB RAM`
 - 软件：`Python 3.10.20`, `torch 2.10.0+cu130`, `torch CUDA 13.0`, `triton 3.6.0`, `transformers 4.57.6`
-
-最新 node-level nsys：
-
-- `nsys-reps/sota_gpu3_gate_combined_node.nsys-rep`
-- `nsys-reps/sota_gpu3_gate_combined_node.sqlite`
 
 decode graph 统计：
 
@@ -112,7 +107,7 @@ DeepSeek-V2-Lite MoE 配置：
 
 - 旧 graph 版本性能不理想，主因是 MoE patch 错误地全算 experts
 - 不能据此否定 CUDA graph
-- 当前 SOTA 已用 topk-only Triton MoE 路径替换该旧逻辑
+- 后续 Triton MoE 路径已使用 topk-only 计算替换该旧逻辑
 
 ## Graph 外 Kernel 收敛
 
@@ -131,26 +126,25 @@ DeepSeek-V2-Lite MoE 配置：
 - decode 外壳不是主要瓶颈
 - 后续性能问题主要位于 graph 内模型 kernel
 
-## Baseline 与 SOTA 的关系
+## 历史 Baseline 与 SOTA 的关系
 
 `src/baseline.py`：
 
-- 用于保留 HF decode-only CUDA graph baseline
+- 用于保留早期 HF decode-only CUDA graph baseline
 - 尽量少改模型内部算子
 - 作为 correctness / 性能对比参考
 
 `src/sota.py`：
 
-- 用于接入 Triton kernels
-- 代表当前性能优化路径
+- 用于接入早期 Triton kernels
 - 允许针对 DeepSeek-V2-Lite 固定形状做专用化
 
-后续新增优化应默认先接入 `src/sota.py`，与 `src/baseline.py` 对比。
+后续新增优化不再接入这两个历史入口，应通过 `src/run.py` 的
+`--kernel-family small|batch` 做对比。
 
 ## 当前结论
 
-- 当前 baseline 是 `src/baseline.py`。
-- 当前优化路径是 `src/sota.py`。
+- 当前活跃入口是 `src/run.py --kernel-family small|batch`。
 - decode graph 外 GPU kernel 已基本收敛。
 - graph 内主要耗时来自 MoE、GEMV/GEMM 和少量 torch elementwise/copy。
 - 旧 HF graph 性能问题主要来自 MoE 全 experts 误算，不能据此否定 CUDA graph。

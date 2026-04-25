@@ -37,9 +37,12 @@ only if single-kernel metrics or end-to-end graph metrics justify it.
 
 The current runner intentionally exposes two kernel families:
 
-- `--kernel-family small`: batched API with a small-GEMV implementation template.
+- `--kernel-family small`: GEMV-oriented kernels derived from the `bsz=1`
+  execution template. This family is mainly the low-batch / `bsz=1` optimized
+  path and is kept as a full sweep curve to show how route-local GEMV scales.
 - `--kernel-family batch`: grouped batching kernels that reuse weights across
-  batch and expert routes.
+  batch and expert routes. This family is optimized for larger batch throughput
+  and is the high-batch path.
 
 These are selected by an explicit runtime argument so full-batch sweeps compare
 implementation methods directly rather than hiding the tradeoff behind an

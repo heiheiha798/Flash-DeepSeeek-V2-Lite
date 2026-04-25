@@ -71,12 +71,11 @@ CUDAGraphMode.FULL_AND_PIECEWISE is not supported with TritonMLABackend
 setting cudagraph_mode=PIECEWISE
 ```
 
-Latest observed A100 GPU3 latency result:
+Latest observed A100 latency result:
 
 ```text
 batch_size=1 output_len=100 avg latency: 1.274782 s
 batch_size=1 output TPS:                 78.44 tok/s
-log: /tmp/dsv2lite_a100_rerun_20260425_162309/vllm/bs1.log
 hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: vllm 0.16.0, torch 2.9.1+cu130, triton 3.5.1, flashinfer-python 0.6.3
 ```
