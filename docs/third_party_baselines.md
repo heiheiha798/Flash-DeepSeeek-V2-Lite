@@ -79,22 +79,22 @@ Notes:
 ## src/sota Batch Sweep
 
 The current custom Triton path was rerun on physical GPU 3 on April 25, 2026
-after switching decode attention and MoE to shared batched Triton paths. MoE now
-uses shape-keyed tile autotuning over the same grouped-kernel implementation;
-there is no separate `bsz=1` MoE kernel dispatch in this run. Shape is input
-length 24 and output length 100. Log: `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log`.
+after adding small-batch linear tiling and expanding grouped-MoE tile
+autotuning. MoE still uses the grouped batched implementation for all active
+batch sizes; the experimental route-major low-route path remains disabled.
+Shape is input length 24 and output length 100.
 
 | Batch | Path | Decode tok/s |
 | ---: | --- | ---: |
-| 1 | `triton_decode_graph` | 144.78 |
-| 2 | `triton_decode_graph` | 266.97 |
-| 4 | `triton_decode_graph` | 514.33 |
-| 8 | `triton_decode_graph` | 951.82 |
-| 16 | `triton_decode_graph` | 1920.58 |
-| 32 | `triton_decode_graph` | 3624.22 |
-| 64 | `triton_decode_graph` | 5746.40 |
-| 128 | `triton_decode_graph` | 7902.84 |
-| 256 | `triton_decode_graph` | 9395.99 |
+| 1 | `triton_decode_graph` | 159.59 |
+| 2 | `triton_decode_graph` | 276.67 |
+| 4 | `triton_decode_graph` | 537.08 |
+| 8 | `triton_decode_graph` | 974.91 |
+| 16 | `triton_decode_graph` | 1957.76 |
+| 32 | `triton_decode_graph` | 3622.55 |
+| 64 | `triton_decode_graph` | 5742.33 |
+| 128 | `triton_decode_graph` | 7902.50 |
+| 256 | `triton_decode_graph` | 9340.77 |
 
 Note: all plotted backends are capped at batch size 256. The earlier 512 point
 is intentionally excluded from the plot and table.

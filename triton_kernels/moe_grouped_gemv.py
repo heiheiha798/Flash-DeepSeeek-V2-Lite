@@ -28,13 +28,25 @@ class PackedRoutedExperts:
 
 
 MOE_GROUPED_TILE_CANDIDATES: tuple[tuple[int, int, int], ...] = (
+    (1, 32, 128),
+    (2, 32, 128),
+    (2, 32, 256),
     (4, 16, 64),
+    (4, 32, 128),
+    (4, 32, 256),
     (8, 16, 64),
+    (8, 32, 64),
+    (8, 32, 128),
+    (8, 64, 128),
     (16, 16, 64),
     (16, 32, 64),
+    (16, 64, 128),
     (32, 32, 64),
     (32, 64, 128),
 )
+
+# Kept disabled until the route-major path beats grouped kernels end to end.
+MOE_ROUTE_GEMV_MAX_ROUTES = 0
 
 
 @triton.jit
@@ -212,30 +224,30 @@ def _batched_fused_gate_up_swiglu_kernel(
     expert_id = tl.load(topk_ids_ptr + token_idx * topk_ids_stride_b + slot_idx * topk_ids_stride_s).to(tl.int32)
     gate_up_base_ptr = gate_up_ptr + expert_id * gate_up_stride_e
     k_offsets_base = tl.arange(0, BLOCK_K)
-    gate_up_acc = tl.zeros((2, BLOCK_M), dtype=tl.float32)
+    gate_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    up_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
     k_block = 0
     while k_block * BLOCK_K < hidden_size:
         k_start = k_block * BLOCK_K
         k_offsets = k_start + k_offsets_base
         k_mask = k_offsets < hidden_size
         x = tl.load(x_ptr + token_idx * x_stride_b + k_offsets * x_stride_k, mask=k_mask, other=0.0).to(tl.float32)
-        x_col = x[:, None]
-
-        gate_up_block_ptr = tl.make_block_ptr(
-            base=gate_up_base_ptr,
-            shape=(2 * intermediate_size, hidden_size),
-            strides=(gate_up_stride_m, gate_up_stride_k),
-            offsets=(row_start, k_start),
-            block_shape=(2 * BLOCK_M, BLOCK_K),
-            order=(1, 0),
-        )
-        gate_up_w = tl.load(gate_up_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
-        gate_up_acc += tl.reshape(tl.dot(gate_up_w, x_col), (2, BLOCK_M))
+        gate_w = tl.load(
+            gate_up_base_ptr + k_offsets[:, None] * gate_up_stride_k + row_offsets[None, :] * gate_up_stride_m,
+            mask=k_mask[:, None] & row_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        up_w = tl.load(
+            gate_up_base_ptr
+            + k_offsets[:, None] * gate_up_stride_k
+            + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
+            mask=k_mask[:, None] & row_mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        gate_acc += tl.reshape(tl.dot(x[None, :], gate_w), (BLOCK_M,))
+        up_acc += tl.reshape(tl.dot(x[None, :], up_w), (BLOCK_M,))
         k_block += 1
 
-    gate_up_rows = tl.arange(0, 2)[:, None]
-    gate_acc = tl.sum(tl.where(gate_up_rows == 0, gate_up_acc, 0.0), axis=0)
-    up_acc = tl.sum(tl.where(gate_up_rows == 1, gate_up_acc, 0.0), axis=0)
     routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
     hidden_ptrs = hidden_ptr + route_idx * hidden_stride_r + row_offsets * hidden_stride_m
     tl.store(hidden_ptrs, routed_hidden, mask=row_mask)
@@ -655,6 +667,9 @@ def batched_grouped_routed_moe(
     if packed.gate_up_weights.device != x.device or packed.down_weights.device != x.device:
         packed.to(device=x.device)
 
+    total_routes = int(x.shape[0]) * int(packed.topk)
+    if total_routes <= MOE_ROUTE_GEMV_MAX_ROUTES:
+        return batched_grouped_routed_moe_route_gemv(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
     return batched_grouped_routed_moe_grouped_triton(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
 
 
@@ -774,11 +789,17 @@ def _run_batched_grouped_routed_moe_grouped_triton(
 
 
 def _default_moe_grouped_tile(batch_size: int) -> tuple[int, int, int]:
-    if batch_size >= 128:
+    if batch_size >= 32:
         return 32, 64, 128
     if batch_size >= 16:
-        return 16, 32, 64
-    return 4, 32, 64
+        return 4, 32, 256
+    if batch_size >= 8:
+        return 32, 64, 128
+    if batch_size >= 4:
+        return 2, 32, 128
+    if batch_size >= 2:
+        return 16, 64, 128
+    return 8, 32, 64
 
 
 def _select_moe_grouped_tile(
@@ -880,7 +901,7 @@ def batched_grouped_routed_moe_route_gemv(
 
     block_m = 32
     block_k = 128
-    routed_hidden = torch.empty((total_routes, intermediate_size), device=x.device, dtype=torch.float32)
+    routed_hidden = torch.empty((total_routes, intermediate_size), device=x.device, dtype=torch.bfloat16)
     partial = torch.empty((total_routes, hidden_size), device=x.device, dtype=torch.float32)
     out = torch.empty((batch_size, hidden_size), device=x.device, dtype=output_dtype)
 

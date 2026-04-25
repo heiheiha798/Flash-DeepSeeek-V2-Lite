@@ -38,49 +38,43 @@ def main() -> None:
         raise RuntimeError("Failed to find DeepseekV2MoE layer")
     config = model.config
 
-    x = torch.randn((1, config.hidden_size), device="cuda", dtype=torch.bfloat16)
-    topk_ids = torch.tensor([[1, 7, 9, 13, 21, 42]], device="cuda", dtype=torch.long)
-    topk_weight = torch.randn((1, config.num_experts_per_tok), device="cuda", dtype=torch.float32).softmax(dim=-1)
-
     packed = pack_routed_experts(moe)
 
-    with torch.inference_mode():
+    def reference(x: torch.Tensor, topk_ids: torch.Tensor, topk_weight: torch.Tensor) -> torch.Tensor:
         ref = torch.zeros_like(x)
         for slot in range(config.num_experts_per_tok):
-            expert_idx = int(topk_ids[0, slot].item())
-            expert_out = moe.experts[expert_idx](x)
-            ref += expert_out * topk_weight[:, slot : slot + 1].to(dtype=expert_out.dtype)
+            for row in range(x.shape[0]):
+                expert_idx = int(topk_ids[row, slot].item())
+                expert_out = moe.experts[expert_idx](x[row : row + 1])
+                ref[row : row + 1] += expert_out * topk_weight[row : row + 1, slot : slot + 1].to(dtype=expert_out.dtype)
+        return ref
 
-        out = grouped_routed_moe(x, topk_ids, topk_weight, packed)
+    results = {}
+    with torch.inference_mode():
+        for batch_size in (1, 2, 4, 8, 16):
+            x = torch.randn((batch_size, config.hidden_size), device="cuda", dtype=torch.bfloat16)
+            topk_ids = torch.randint(
+                0,
+                config.n_routed_experts,
+                (batch_size, config.num_experts_per_tok),
+                device="cuda",
+                dtype=torch.long,
+            )
+            topk_weight = torch.randn(
+                (batch_size, config.num_experts_per_tok),
+                device="cuda",
+                dtype=torch.float32,
+            ).softmax(dim=-1)
+            ref = reference(x, topk_ids, topk_weight)
+            out = batched_grouped_routed_moe(x, topk_ids, topk_weight, packed)
+            results[f"batch_{batch_size}"] = {
+                "max_abs_err": torch.max(torch.abs(ref.float() - out.float())).item(),
+                "ref_norm": torch.linalg.vector_norm(ref.float()).item(),
+                "out_norm": torch.linalg.vector_norm(out.float()).item(),
+            }
 
-    max_abs_err = torch.max(torch.abs(ref.float() - out.float())).item()
-
-    batch_size = 16
-    xb = torch.randn((batch_size, config.hidden_size), device="cuda", dtype=torch.bfloat16)
-    topk_ids_b = torch.randint(
-        0,
-        config.n_routed_experts,
-        (batch_size, config.num_experts_per_tok),
-        device="cuda",
-        dtype=torch.long,
-    )
-    topk_weight_b = torch.randn((batch_size, config.num_experts_per_tok), device="cuda", dtype=torch.float32).softmax(dim=-1)
-    ref_b = torch.zeros_like(xb)
-    for slot in range(config.num_experts_per_tok):
-        for row in range(batch_size):
-            expert_idx = int(topk_ids_b[row, slot].item())
-            expert_out = moe.experts[expert_idx](xb[row : row + 1])
-            ref_b[row : row + 1] += expert_out * topk_weight_b[row : row + 1, slot : slot + 1].to(dtype=expert_out.dtype)
-    out_b = batched_grouped_routed_moe(xb, topk_ids_b, topk_weight_b, packed)
-
-    batch_max_abs_err = torch.max(torch.abs(ref_b.float() - out_b.float())).item()
     result = {
-        "max_abs_err": max_abs_err,
-        "ref_norm": torch.linalg.vector_norm(ref.float()).item(),
-        "out_norm": torch.linalg.vector_norm(out.float()).item(),
-        "batch_max_abs_err": batch_max_abs_err,
-        "batch_ref_norm": torch.linalg.vector_norm(ref_b.float()).item(),
-        "batch_out_norm": torch.linalg.vector_norm(out_b.float()).item(),
+        "results": results,
     }
     print(json.dumps(result, indent=2))
 

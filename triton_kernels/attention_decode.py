@@ -900,6 +900,12 @@ def _batched_linear_kernel(
     )
 
 
+def _select_batched_linear_tile(batch_size: int) -> tuple[int, int, int]:
+    if batch_size == 1:
+        return 1, 64, 256
+    return 8, 64, 128
+
+
 @triton.jit
 def _batched_build_qkv_rope_kernel(
     q_kv_a_ptr,
@@ -1103,7 +1109,8 @@ def attention_decode_triton(
     x = hidden_states.view(batch_size, DSV2L_HIDDEN)
     workspace = _get_batched_workspace(packed, x.device, batch_size)
 
-    _batched_linear_kernel[(triton.cdiv(batch_size, 8), triton.cdiv(DSV2L_Q_ROWS + DSV2L_KV_A_ROWS, 64))](
+    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
+    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_Q_ROWS + DSV2L_KV_A_ROWS, block_o))](
         x,
         packed.q_kv_a_weight,
         workspace.q_kv_a_out,
@@ -1116,9 +1123,9 @@ def attention_decode_triton(
         packed.q_kv_a_weight.stride(1),
         workspace.q_kv_a_out.stride(0),
         workspace.q_kv_a_out.stride(1),
-        BLOCK_B=8,
-        BLOCK_O=64,
-        BLOCK_K=128,
+        BLOCK_B=block_b,
+        BLOCK_O=block_o,
+        BLOCK_K=block_k,
         num_warps=4,
         num_stages=4,
     )
@@ -1130,7 +1137,8 @@ def attention_decode_triton(
     ).view(batch_size, DSV2L_KV_LORA_RANK)
     workspace.kv_lora_norm.copy_(kv_lora_norm)
 
-    _batched_linear_kernel[(triton.cdiv(batch_size, 8), triton.cdiv(DSV2L_KVB_ROWS, 64))](
+    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
+    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_KVB_ROWS, block_o))](
         workspace.kv_lora_norm,
         packed.kv_b_weight,
         workspace.kvb_proj,
@@ -1143,9 +1151,9 @@ def attention_decode_triton(
         packed.kv_b_weight.stride(1),
         workspace.kvb_proj.stride(0),
         workspace.kvb_proj.stride(1),
-        BLOCK_B=8,
-        BLOCK_O=64,
-        BLOCK_K=128,
+        BLOCK_B=block_b,
+        BLOCK_O=block_o,
+        BLOCK_K=block_k,
         num_warps=4,
         num_stages=4,
     )
@@ -1229,7 +1237,8 @@ def attention_decode_triton(
     )
     attn_ctx_flat = workspace.attn_ctx.view(batch_size, DSV2L_NUM_HEADS * DSV2L_V_DIM)
     o_out_flat = workspace.o_out.view(batch_size, DSV2L_HIDDEN)
-    _batched_linear_kernel[(triton.cdiv(batch_size, 8), triton.cdiv(DSV2L_HIDDEN, 64))](
+    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
+    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_HIDDEN, block_o))](
         attn_ctx_flat,
         packed.o_weight,
         o_out_flat,
@@ -1242,9 +1251,9 @@ def attention_decode_triton(
         packed.o_weight.stride(1),
         o_out_flat.stride(0),
         o_out_flat.stride(1),
-        BLOCK_B=8,
-        BLOCK_O=64,
-        BLOCK_K=128,
+        BLOCK_B=block_b,
+        BLOCK_O=block_o,
+        BLOCK_K=block_k,
         num_warps=4,
         num_stages=4,
     )

@@ -237,3 +237,80 @@ Required checks:
 - `git diff --check`;
 - A100 TPS sweep before and after;
 - `nsys` node-level profiles for representative small and large batches.
+
+## 2026-04-25 Small-Batch Implementation Result
+
+The first small-batch pass kept the unified batched decode API and did not
+restore the old single-token decode path.
+
+Enabled changes:
+
+- `_batched_linear_kernel` now uses a shape-adaptive launch tile for `B=1`:
+  `BLOCK_B=1`, `BLOCK_O=64`, `BLOCK_K=256`. For `B>=2`, it keeps the previous
+  `BLOCK_B=8`, `BLOCK_O=64`, `BLOCK_K=128` tile because microbenchmarks showed
+  smaller `BLOCK_B` values were not consistently faster for `B=2/4/8`.
+- The grouped MoE autotune candidate set now includes small-batch-friendly
+  tiles such as `(2, 32, 128)`, `(4, 32, 256)`, `(8, 64, 128)`, and
+  `(32, 64, 128)`. The graph warmup path can select these before CUDA graph
+  capture.
+- The default grouped MoE tile fallback was updated by batch regime so graph
+  capture has a better no-autotune fallback.
+
+Evaluated but not enabled:
+
+- The existing route-major batched MoE path was repaired to load packed gate and
+  up weights correctly and to use bf16 `routed_hidden`, but end-to-end decode
+  was slower for `B=2/4/8`. It remains disabled with
+  `MOE_ROUTE_GEMV_MAX_ROUTES = 0`.
+- Direct MoE microbenchmarks showed route-major can beat grouped kernels for a
+  single isolated MoE call at `B<=8`, but that did not transfer to full decode
+  under the current graph/warmup/workspace behavior. The active path therefore
+  keeps the grouped batched MoE kernels.
+
+A100 GPU3, `max_new_tokens=100`, input length 24:
+
+| Batch | Previous TPS | New TPS | Change |
+| ---: | ---: | ---: | ---: |
+| 1 | 144.78 | 159.59 | +10.2% |
+| 2 | 266.97 | 276.67 | +3.6% |
+| 4 | 514.33 | 537.08 | +4.4% |
+| 8 | 951.82 | 974.91 | +2.4% |
+| 16 | 1920.58 | 1957.76 | +1.9% |
+| 32 | 3624.22 | 3622.55 | -0.0% |
+| 64 | 5746.40 | 5742.33 | -0.1% |
+| 128 | 7902.84 | 7902.50 | -0.0% |
+| 256 | 9395.99 | 9340.77 | -0.6% |
+
+The current result improves the targeted small-batch range without materially
+changing large-batch throughput. The remaining main opportunity is still MoE:
+the route-major idea needs either a fused/reduced workspace form or a different
+graph-captured allocation strategy before it should replace grouped kernels for
+small batches.
+
+## Next Direction: Dedicated Small-Batch Kernel Family
+
+The latest `bsz=1` `nsys` comparison still shows the current batching kernels do
+not fully match the earlier GEMV-oriented implementation:
+
+| Area | Historical `fc39f1f` | Current batching path | Delta |
+| --- | ---: | ---: | ---: |
+| Attention projections | `_gemv_contig` + `_gemv_2048x2048_o`: 81.35 ms | `_batched_linear_kernel`: 139.77 ms | +58.43 ms |
+| MoE main work and routing | route-local gate/up, down, reduce: 164.26 ms | grouped gate/up, grouped down, reduce, route metadata: 297.62 ms | +133.36 ms |
+| Decode attention | `_decode_attention_q1_kernel`: 22.88 ms | `_batched_decode_attention_q1_kernel`: 35.38 ms | +12.50 ms |
+| Total GPU kernel time | 612.45 ms | 737.17 ms | +124.72 ms |
+
+This supports a clearer design split: keep a common front-end and common batched
+semantics, but add a small-batch kernel family for `B <= 8`. The front-end can
+select the kernel family from the known static batch size before CUDA graph
+capture.
+
+Planned split:
+
+- `B <= 8`: small-batch kernels that are still batched over `[B, ...]`, but use
+  GEMV-like projection tiles and route-major MoE kernels that avoid full grouped
+  route metadata.
+- `B > 8`: current grouped batched kernels with shape-keyed autotuning.
+
+The small-batch family should not be a `bsz=1`-only path. It should support
+`B=1/2/4/8` through the same API so the scheduler only chooses between
+small-batch and grouped-batch kernel families.

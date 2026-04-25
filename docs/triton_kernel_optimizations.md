@@ -527,15 +527,15 @@ Validated on NVIDIA A100 80GB PCIe GPU3 with input length 24 and
 
 | Batch | Path | Decode TPS | Log |
 | ---: | --- | ---: | --- |
-| 1 | `triton_decode_graph` | 144.78 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 2 | `triton_decode_graph` | 266.97 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 4 | `triton_decode_graph` | 514.33 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 8 | `triton_decode_graph` | 951.82 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 16 | `triton_decode_graph` | 1920.58 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 32 | `triton_decode_graph` | 3624.22 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 64 | `triton_decode_graph` | 5746.40 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 128 | `triton_decode_graph` | 7902.84 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
-| 256 | `triton_decode_graph` | 9395.99 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 1 | `triton_decode_graph` | 159.59 | latest A100 GPU3 small-batch sweep |
+| 2 | `triton_decode_graph` | 276.67 | latest A100 GPU3 small-batch sweep |
+| 4 | `triton_decode_graph` | 537.08 | latest A100 GPU3 small-batch sweep |
+| 8 | `triton_decode_graph` | 974.91 | latest A100 GPU3 small-batch sweep |
+| 16 | `triton_decode_graph` | 1957.76 | latest A100 GPU3 small-batch sweep |
+| 32 | `triton_decode_graph` | 3622.55 | latest A100 GPU3 small-batch sweep |
+| 64 | `triton_decode_graph` | 5742.33 | latest A100 GPU3 small-batch sweep |
+| 128 | `triton_decode_graph` | 7902.50 | latest A100 GPU3 small-batch sweep |
+| 256 | `triton_decode_graph` | 9340.77 | latest A100 GPU3 small-batch sweep |
 
 Node-level `nsys` reports for the current path:
 
