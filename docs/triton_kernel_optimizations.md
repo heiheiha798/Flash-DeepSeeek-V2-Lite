@@ -633,3 +633,121 @@ Also tested and reverted during this review:
 
 Those changes did not reduce visible kernel counts in `nsys`, so they were not
 kept.
+
+## Batch Attention Linear Tile
+
+After excluding the heavily optimized MoE gate/up and down kernels, the next
+largest custom Triton hotspot at `bsz=256` was `_batched_linear_kernel`, used by
+the batched attention projections:
+
+- q + kv-a projection: `[B, 2048] x [3648, 2048]`
+- kv-b projection: `[B, 512] x [4096, 512]`
+- o projection: `[B, 2048] x [2048, 2048]`
+
+This kernel is a straightforward row-batched linear projection. One CTA computes
+one `(BLOCK_B, BLOCK_O)` output tile and iterates over the input dimension in
+`BLOCK_K` chunks:
+
+```text
+acc[BLOCK_B, BLOCK_O] += x[BLOCK_B, BLOCK_K] @ w[BLOCK_O, BLOCK_K]^T
+```
+
+The previous default tile for `batch_size > 1` was `(BLOCK_B, BLOCK_O, BLOCK_K)
+= (8, 64, 128)`. For small and medium batch sizes this is a reasonable
+decomposition: each CTA is light, register pressure is moderate, and the grid is
+large enough to expose parallelism. At high batch sizes the same tile becomes
+over-decomposed. It splits a dense `B x out_rows` projection into many small
+CTAs even though each CTA still pays the fixed costs of scheduling, masks,
+pointer arithmetic, loop setup, and stores.
+
+For `batch_size >= 128`, the default is now `(32, 64, 128)`. The math is
+unchanged. The new tile only groups four times as many batch rows into each CTA:
+
+| Tile | Output elements per CTA | K tile | Main difference |
+| --- | ---: | ---: | --- |
+| old `(8,64,128)` | 512 | 128 | more CTAs, lower per-CTA register use |
+| new `(32,64,128)` | 2048 | 128 | fewer CTAs, higher per-CTA register use |
+
+At `B=256`, this cuts the grid by exactly 4x for the three real projection
+shapes:
+
+| Projection | Old grid | New grid | Reduction |
+| --- | ---: | ---: | ---: |
+| q + kv-a | 1824 | 456 | 4.0x |
+| kv-b | 2048 | 512 | 4.0x |
+| o | 1024 | 256 | 4.0x |
+
+This is why the source diff looks surprisingly small. The old kernel was not
+doing wrong arithmetic; it was launching too many independently scheduled CTAs
+for these high-batch projection shapes. The new tile leaves the inner K loop,
+output dimension tile, dtype path, and memory layout unchanged, but amortizes the
+fixed per-CTA work across four times as many batch rows.
+
+NCU comparison at `bsz=256`, first three steady-state `_batched_linear_kernel`
+launches:
+
+| Projection | Tile | Grid | Duration | SM Busy | Mem Busy | Issue Active | Eligible Warps | Active Warps | Reg/thread |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| q + kv-a | `(8,64,128)` | 1824 | 188.51 us | 42.02% | 67.59% | 44.15% | 0.734 | 4.558 | 94 |
+| q + kv-a | `(32,64,128)` | 456 | 105.34 us | 30.89% | 48.41% | 31.29% | 0.386 | 2.242 | 162 |
+| kv-b | `(8,64,128)` | 2048 | 59.78 us | 40.81% | 62.46% | 44.91% | 0.774 | 4.661 | 94 |
+| kv-b | `(32,64,128)` | 512 | 36.03 us | 29.07% | 47.00% | 32.38% | 0.422 | 2.516 | 162 |
+| o | `(8,64,128)` | 1024 | 111.49 us | 40.69% | 65.05% | 44.41% | 0.739 | 4.600 | 94 |
+| o | `(32,64,128)` | 256 | 64.58 us | 29.67% | 46.79% | 31.29% | 0.387 | 2.308 | 162 |
+
+The counter-intuitive part is that several local utilization counters become
+lower with the faster tile. This is expected here:
+
+- `Reg/thread` increases from 94 to 162 because the accumulator grows from
+  `8 x 64` to `32 x 64`.
+- `SM Busy`, memory busy, issue active, active warps, and eligible warps all
+  drop in the sampled kernels.
+- Despite that, total duration drops from about `359.8 us` to `206.0 us` across
+  these three launches.
+
+The interpretation is that the old tile was keeping the GPU busier at the CTA
+scheduler level, but a meaningful part of that activity was overhead from
+over-decomposition. The new tile has worse-looking per-SM instantaneous activity,
+yet completes the projection sooner because the amount of CTA-level bookkeeping
+is much smaller and each CTA performs more useful dot work before retiring.
+Occupancy-like counters alone would point in the wrong direction for this case;
+the decisive metric is end-to-end kernel duration on the actual projection
+shapes.
+
+This should not be generalized into "larger `BLOCK_B` is always better". The
+tradeoff is shape-specific:
+
+- At small batch sizes, `BLOCK_B=32` would waste lanes on masked batch rows and
+  carry the higher register footprint without enough useful rows to amortize it.
+- At high batch sizes, especially `B=128/256`, the projections are large enough
+  that reducing CTA count dominates the extra register pressure.
+- `BLOCK_O=64` and `BLOCK_K=128` were intentionally left unchanged, so this
+  optimization isolates the batch-axis tiling effect instead of mixing in a new
+  output/K pipeline.
+
+The practical rule kept in code is therefore conservative: keep the existing
+`(8,64,128)` tile for `1 < batch_size < 128`, keep the existing `bsz=1` tile,
+and only switch to `(32,64,128)` for `batch_size >= 128`.
+
+Reports:
+
+- `ncu-reps/batch_bsz256_batched_linear_default_decode_8c21ced.ncu-rep`
+- `ncu-reps/batch_bsz256_batched_linear_b32_decode.ncu-rep`
+
+Correctness:
+
+- Direct A/B of `(8,64,128)` versus `(32,64,128)` on the three real shapes was
+  bitwise equal.
+- The override `DSV2_BATCH_LINEAR_TILE=N,M,K` remains available for experiments.
+
+End-to-end `bsz=256`, `max_new_tokens=100` measured `11390.90` decode TPS on
+A100 GPU3 after this change. `bsz=128` also improved in the quick A/B check:
+`8608.96` TPS with old `(8,64,128)` versus `9482.83` TPS with the new default.
+
+Open follow-ups:
+
+- Sweep `B=64/96/128/192/256` to confirm whether the threshold should remain
+  exactly `128`.
+- Consider per-projection tile choices only if profiling shows a clear split
+  between q/kv-a, kv-b, and o. The current single rule is intentionally simpler
+  and already gives the main gain.

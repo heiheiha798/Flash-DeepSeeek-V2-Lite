@@ -79,22 +79,24 @@ Notes:
 
 ## src Batch Sweep
 
-The current custom Triton path was rerun on physical GPU 3 on April 25, 2026.
-Shape is input length 24 and output length 100. The table compares two forced
+The current custom Triton path was rerun on physical GPU 3 on April 25, 2026
+after the batch attention linear tile update. Shape is input length 24 and
+output length 100. Logs are under
+`/tmp/dsv2lite_src_rerun_20260425_232359`. The table compares two forced
 dispatch modes: batching kernels for every batch size, and small-GEMV kernels
 for every measured batch size.
 
 | Batch | Forced batching tok/s | Forced small-GEMV tok/s |
 | ---: | ---: | ---: |
-| 1 | 158.07 | 184.64 |
-| 2 | 277.16 | 240.25 |
-| 4 | 537.06 | 415.45 |
-| 8 | 959.59 | 565.07 |
-| 16 | 1958.82 | 716.89 |
-| 32 | 3631.14 | 819.37 |
-| 64 | 5745.78 | 906.00 |
-| 128 | 7902.87 | 957.10 |
-| 256 | 9402.64 | 987.84 |
+| 1 | 154.03 | 184.54 |
+| 2 | 270.65 | 240.28 |
+| 4 | 518.80 | 415.35 |
+| 8 | 958.35 | 564.82 |
+| 16 | 1914.46 | 716.83 |
+| 32 | 3608.94 | 820.20 |
+| 64 | 6237.99 | 900.45 |
+| 128 | 9109.06 | 950.33 |
+| 256 | 11428.26 | 981.90 |
 
 Note: all plotted backends are capped at batch size 256. The earlier 512 point
 is intentionally excluded from the plot and table.
@@ -129,4 +131,10 @@ CUDA_VISIBLE_DEVICES=3 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
   --model-path /data/models/DeepSeek-V2-Lite-Chat --device cuda:0 \
   --max-new-tokens 100 --batch-sizes "1 2 4 8 16 32 64 128 256" \
   2>&1 | tee "${RUN_DIR}/src_small_gemv_sweep.log"
+```
+
+The refreshed `src/run.py` logs for the current table used:
+
+```bash
+RUN_DIR=/tmp/dsv2lite_src_rerun_20260425_232359
 ```

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import torch
@@ -468,9 +469,27 @@ def _batched_linear_kernel(
 
 
 def _select_batched_linear_tile(batch_size: int) -> tuple[int, int, int]:
+    forced_tile = _parse_batched_linear_tile_env()
+    if forced_tile is not None:
+        return forced_tile
     if batch_size == 1:
         return 1, 64, 256
+    if batch_size >= 128:
+        return 32, 64, 128
     return 8, 64, 128
+
+
+def _parse_batched_linear_tile_env() -> tuple[int, int, int] | None:
+    value = os.environ.get("DSV2_BATCH_LINEAR_TILE")
+    if not value:
+        return None
+    parts = value.replace(",", " ").replace("x", " ").split()
+    if len(parts) != 3:
+        raise ValueError(f"DSV2_BATCH_LINEAR_TILE must contain three integers, got {value!r}")
+    tile = tuple(int(part) for part in parts)
+    if any(part <= 0 for part in tile):
+        raise ValueError(f"DSV2_BATCH_LINEAR_TILE must contain positive integers, got {value!r}")
+    return tile  # type: ignore[return-value]
 
 
 @triton.jit
