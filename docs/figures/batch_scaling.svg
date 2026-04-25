@@ -23,66 +23,68 @@
 <line x1="800.0" y1="72" x2="800.0" y2="558" stroke="#e8e8e8" stroke-width="1" />
 <text x="800.0" y="586.0" text-anchor="middle" font-size="13" fill="#333">256</text>
 <line x1="92" y1="558.0" x2="800" y2="558.0" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="562.0" text-anchor="end" font-size="13" fill="#333">50</text>
-<line x1="92" y1="489.8" x2="800" y2="489.8" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="493.8" text-anchor="end" font-size="13" fill="#333">100</text>
-<line x1="92" y1="421.7" x2="800" y2="421.7" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="425.7" text-anchor="end" font-size="13" fill="#333">200</text>
-<line x1="92" y1="331.5" x2="800" y2="331.5" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="335.5" text-anchor="end" font-size="13" fill="#333">500</text>
-<line x1="92" y1="263.4" x2="800" y2="263.4" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="267.4" text-anchor="end" font-size="13" fill="#333">1k</text>
-<line x1="92" y1="195.2" x2="800" y2="195.2" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="199.2" text-anchor="end" font-size="13" fill="#333">2k</text>
-<line x1="92" y1="105.1" x2="800" y2="105.1" stroke="#e8e8e8" stroke-width="1" />
-<text x="80.0" y="109.1" text-anchor="end" font-size="13" fill="#333">5k</text>
+<text x="80.0" y="562.0" text-anchor="end" font-size="13" fill="#333">64</text>
+<line x1="92" y1="488.6" x2="800" y2="488.6" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="492.6" text-anchor="end" font-size="13" fill="#333">128</text>
+<line x1="92" y1="419.1" x2="800" y2="419.1" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="423.1" text-anchor="end" font-size="13" fill="#333">256</text>
+<line x1="92" y1="349.7" x2="800" y2="349.7" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="353.7" text-anchor="end" font-size="13" fill="#333">512</text>
+<line x1="92" y1="280.3" x2="800" y2="280.3" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="284.3" text-anchor="end" font-size="13" fill="#333">1k</text>
+<line x1="92" y1="210.9" x2="800" y2="210.9" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="214.9" text-anchor="end" font-size="13" fill="#333">2k</text>
+<line x1="92" y1="141.4" x2="800" y2="141.4" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="145.4" text-anchor="end" font-size="13" fill="#333">4k</text>
+<line x1="92" y1="72.0" x2="800" y2="72.0" stroke="#e8e8e8" stroke-width="1" />
+<text x="80.0" y="76.0" text-anchor="end" font-size="13" fill="#333">8k</text>
 <rect x="92" y="72" width="708" height="486" fill="none" stroke="#222" stroke-width="1.2" />
 <text x="446.0" y="616.0" text-anchor="middle" font-size="16" fill="#111">Batch size / parallel sequences</text>
 <text x="24" y="315.0" text-anchor="middle" font-size="16" fill="#111" transform="rotate(-90 24 315.0)">Throughput (tok/s, log scale)</text>
-<polyline points="92.0,459.0 180.5,428.2 269.0,360.8 357.5,330.1 446.0,245.7 534.5,230.4 623.0,182.1 711.5,150.2 800.0,132.7" fill="none" stroke="#d62728" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<polygon points="92.0,453.0 86.0,459.0 92.0,465.0 98.0,459.0" fill="#d62728" />
-<polygon points="180.5,422.2 174.5,428.2 180.5,434.2 186.5,428.2" fill="#d62728" />
-<polygon points="269.0,354.8 263.0,360.8 269.0,366.8 275.0,360.8" fill="#d62728" />
-<polygon points="357.5,324.1 351.5,330.1 357.5,336.1 363.5,330.1" fill="#d62728" />
-<polygon points="446.0,239.7 440.0,245.7 446.0,251.7 452.0,245.7" fill="#d62728" />
-<polygon points="534.5,224.4 528.5,230.4 534.5,236.4 540.5,230.4" fill="#d62728" />
-<polygon points="623.0,176.1 617.0,182.1 623.0,188.1 629.0,182.1" fill="#d62728" />
-<polygon points="711.5,144.2 705.5,150.2 711.5,156.2 717.5,150.2" fill="#d62728" />
-<polygon points="800.0,126.7 794.0,132.7 800.0,138.7 806.0,132.7" fill="#d62728" />
-<polyline points="92.0,480.2 180.5,446.8 269.0,415.5 357.5,378.1 446.0,335.1 534.5,282.9 623.0,233.2 711.5,201.1 800.0,143.4" fill="none" stroke="#1f77b4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<rect x="87.0" y="475.2" width="10" height="10" fill="#1f77b4" />
-<rect x="175.5" y="441.8" width="10" height="10" fill="#1f77b4" />
-<rect x="264.0" y="410.5" width="10" height="10" fill="#1f77b4" />
-<rect x="352.5" y="373.1" width="10" height="10" fill="#1f77b4" />
-<rect x="441.0" y="330.1" width="10" height="10" fill="#1f77b4" />
-<rect x="529.5" y="277.9" width="10" height="10" fill="#1f77b4" />
-<rect x="618.0" y="228.2" width="10" height="10" fill="#1f77b4" />
-<rect x="706.5" y="196.1" width="10" height="10" fill="#1f77b4" />
-<rect x="795.0" y="138.4" width="10" height="10" fill="#1f77b4" />
-<polyline points="92.0,529.0 180.5,468.7 269.0,417.3 357.5,381.4 446.0,339.4 534.5,290.3 623.0,238.2 711.5,208.9 800.0,157.2" fill="none" stroke="#2ca02c" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<polygon points="92.0,523.0 86.0,534.0 98.0,534.0" fill="#2ca02c" />
-<polygon points="180.5,462.7 174.5,473.7 186.5,473.7" fill="#2ca02c" />
-<polygon points="269.0,411.3 263.0,422.3 275.0,422.3" fill="#2ca02c" />
-<polygon points="357.5,375.4 351.5,386.4 363.5,386.4" fill="#2ca02c" />
-<polygon points="446.0,333.4 440.0,344.4 452.0,344.4" fill="#2ca02c" />
-<polygon points="534.5,284.3 528.5,295.3 540.5,295.3" fill="#2ca02c" />
-<polygon points="623.0,232.2 617.0,243.2 629.0,243.2" fill="#2ca02c" />
-<polygon points="711.5,202.9 705.5,213.9 717.5,213.9" fill="#2ca02c" />
-<polygon points="800.0,151.2 794.0,162.2 806.0,162.2" fill="#2ca02c" />
-<polyline points="92.0,489.9 180.5,446.4 269.0,406.4 357.5,364.1 446.0,328.0 534.5,288.7 623.0,255.7 711.5,232.9 800.0,219.4" fill="none" stroke="#9467bd" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<polygon points="92.0,483.9 86.0,489.9 92.0,495.9 98.0,489.9" fill="#9467bd" />
-<polygon points="180.5,440.4 174.5,446.4 180.5,452.4 186.5,446.4" fill="#9467bd" />
-<polygon points="269.0,400.4 263.0,406.4 269.0,412.4 275.0,406.4" fill="#9467bd" />
-<polygon points="357.5,358.1 351.5,364.1 357.5,370.1 363.5,364.1" fill="#9467bd" />
-<polygon points="446.0,322.0 440.0,328.0 446.0,334.0 452.0,328.0" fill="#9467bd" />
-<polygon points="534.5,282.7 528.5,288.7 534.5,294.7 540.5,288.7" fill="#9467bd" />
-<polygon points="623.0,249.7 617.0,255.7 623.0,261.7 629.0,255.7" fill="#9467bd" />
-<polygon points="711.5,226.9 705.5,232.9 711.5,238.9 717.5,232.9" fill="#9467bd" />
-<polygon points="800.0,213.4 794.0,219.4 800.0,225.4 806.0,219.4" fill="#9467bd" />
+<polyline points="92.0,502.8 180.5,438.9 269.0,370.8 357.5,303.1 446.0,236.8 534.5,180.1 623.0,133.7 711.5,111.5 800.0,102.3" fill="none" stroke="#d62728" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,496.8 86.0,502.8 92.0,508.8 98.0,502.8" fill="#d62728" />
+<polygon points="180.5,432.9 174.5,438.9 180.5,444.9 186.5,438.9" fill="#d62728" />
+<polygon points="269.0,364.8 263.0,370.8 269.0,376.8 275.0,370.8" fill="#d62728" />
+<polygon points="357.5,297.1 351.5,303.1 357.5,309.1 363.5,303.1" fill="#d62728" />
+<polygon points="446.0,230.8 440.0,236.8 446.0,242.8 452.0,236.8" fill="#d62728" />
+<polygon points="534.5,174.1 528.5,180.1 534.5,186.1 540.5,180.1" fill="#d62728" />
+<polygon points="623.0,127.7 617.0,133.7 623.0,139.7 629.0,133.7" fill="#d62728" />
+<polygon points="711.5,105.5 705.5,111.5 711.5,117.5 717.5,111.5" fill="#d62728" />
+<polygon points="800.0,96.3 794.0,102.3 800.0,108.3 806.0,102.3" fill="#d62728" />
+<polyline points="92.0,503.5 180.5,469.5 269.0,437.6 357.5,399.5 446.0,355.7 534.5,302.5 623.0,251.9 711.5,219.2 800.0,160.4" fill="none" stroke="#1f77b4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<rect x="87.0" y="498.5" width="10" height="10" fill="#1f77b4" />
+<rect x="175.5" y="464.5" width="10" height="10" fill="#1f77b4" />
+<rect x="264.0" y="432.6" width="10" height="10" fill="#1f77b4" />
+<rect x="352.5" y="394.5" width="10" height="10" fill="#1f77b4" />
+<rect x="441.0" y="350.7" width="10" height="10" fill="#1f77b4" />
+<rect x="529.5" y="297.5" width="10" height="10" fill="#1f77b4" />
+<rect x="618.0" y="246.9" width="10" height="10" fill="#1f77b4" />
+<rect x="706.5" y="214.2" width="10" height="10" fill="#1f77b4" />
+<rect x="795.0" y="155.4" width="10" height="10" fill="#1f77b4" />
+<polyline points="92.0,553.2 180.5,491.7 269.0,439.5 357.5,402.8 446.0,360.1 534.5,310.1 623.0,257.1 711.5,227.2 800.0,174.5" fill="none" stroke="#2ca02c" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,547.2 86.0,558.2 98.0,558.2" fill="#2ca02c" />
+<polygon points="180.5,485.7 174.5,496.7 186.5,496.7" fill="#2ca02c" />
+<polygon points="269.0,433.5 263.0,444.5 275.0,444.5" fill="#2ca02c" />
+<polygon points="357.5,396.8 351.5,407.8 363.5,407.8" fill="#2ca02c" />
+<polygon points="446.0,354.1 440.0,365.1 452.0,365.1" fill="#2ca02c" />
+<polygon points="534.5,304.1 528.5,315.1 540.5,315.1" fill="#2ca02c" />
+<polygon points="623.0,251.1 617.0,262.1 629.0,262.1" fill="#2ca02c" />
+<polygon points="711.5,221.2 705.5,232.2 717.5,232.2" fill="#2ca02c" />
+<polygon points="800.0,168.5 794.0,179.5 806.0,179.5" fill="#2ca02c" />
+<polyline points="92.0,513.4 180.5,469.1 269.0,428.3 357.5,385.2 446.0,348.5 534.5,308.5 623.0,274.8 711.5,251.6 800.0,237.9" fill="none" stroke="#9467bd" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,507.4 86.0,513.4 92.0,519.4 98.0,513.4" fill="#9467bd" />
+<polygon points="180.5,463.1 174.5,469.1 180.5,475.1 186.5,469.1" fill="#9467bd" />
+<polygon points="269.0,422.3 263.0,428.3 269.0,434.3 275.0,428.3" fill="#9467bd" />
+<polygon points="357.5,379.2 351.5,385.2 357.5,391.2 363.5,385.2" fill="#9467bd" />
+<polygon points="446.0,342.5 440.0,348.5 446.0,354.5 452.0,348.5" fill="#9467bd" />
+<polygon points="534.5,302.5 528.5,308.5 534.5,314.5 540.5,308.5" fill="#9467bd" />
+<polygon points="623.0,268.8 617.0,274.8 623.0,280.8 629.0,274.8" fill="#9467bd" />
+<polygon points="711.5,245.6 705.5,251.6 711.5,257.6 717.5,251.6" fill="#9467bd" />
+<polygon points="800.0,231.9 794.0,237.9 800.0,243.9 806.0,237.9" fill="#9467bd" />
 <text x="844.0" y="82.0" font-size="16" font-weight="700" fill="#111">Backend</text>
 <line x1="844" y1="100.0" x2="878" y2="100.0" stroke="#d62728" stroke-width="3" stroke-linecap="round" />
 <polygon points="861.0,94.0 855.0,100.0 861.0,106.0 867.0,100.0" fill="#d62728" />
-<text x="890.0" y="105.0" font-size="14" fill="#111">src/sota (3775 tok/s @ bsz 256)</text>
+<text x="890.0" y="105.0" font-size="14" fill="#111">src/sota (6051 tok/s @ bsz 256)</text>
 <line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
 <rect x="856.0" y="149.0" width="10" height="10" fill="#1f77b4" />
 <text x="890.0" y="159.0" font-size="14" fill="#111">SGLang (3388 tok/s @ bsz 256)</text>

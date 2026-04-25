@@ -53,8 +53,9 @@ def _cache_write_q1_kernel(
     dst_stride_d,
     BLOCK_D: tl.constexpr,
 ):
-    head_idx = tl.program_id(0)
-    d_block = tl.program_id(1)
+    batch_idx = tl.program_id(0)
+    head_idx = tl.program_id(1)
+    d_block = tl.program_id(2)
     d_offsets = d_block * BLOCK_D + tl.arange(0, BLOCK_D)
     d_mask = d_offsets < head_dim
 
@@ -65,14 +66,14 @@ def _cache_write_q1_kernel(
     pos = tl.load(pos_ptr).to(tl.int32)
     src_ptrs = (
         src_ptr
-        + 0 * src_stride_b
+        + batch_idx * src_stride_b
         + head_idx * src_stride_h
         + 0 * src_stride_s
         + d_offsets * src_stride_d
     )
     dst_ptrs = (
         dst_ptr
-        + 0 * dst_stride_b
+        + batch_idx * dst_stride_b
         + head_idx * dst_stride_h
         + pos * dst_stride_s
         + d_offsets * dst_stride_d
@@ -114,20 +115,21 @@ def copy_single_token_to_cache(
     dst: torch.Tensor,
     cache_position: torch.Tensor,
 ) -> None:
-    # expected decode shapes: src=[1, heads, 1, dim], dst=[1, heads, max_seq, dim]
+    # expected decode shapes: src=[batch, heads, 1, dim], dst=[batch, heads, max_seq, dim]
     if src.device.type != "cuda" or dst.device.type != "cuda":
         raise NotImplementedError("copy_single_token_to_cache requires CUDA tensors")
-    if src.ndim != 4 or dst.ndim != 4 or src.shape[0] != 1 or src.shape[2] != 1 or dst.shape[0] != 1:
-        raise NotImplementedError("copy_single_token_to_cache only supports [1, H, 1, D] -> [1, H, S, D]")
+    if src.ndim != 4 or dst.ndim != 4 or src.shape[2] != 1 or src.shape[0] != dst.shape[0]:
+        raise NotImplementedError("copy_single_token_to_cache only supports [B, H, 1, D] -> [B, H, S, D]")
     if src.dtype != dst.dtype:
         raise ValueError("src and dst dtype must match")
     if cache_position.device.type != "cuda" or cache_position.numel() != 1:
         raise ValueError("cache_position must be a CUDA tensor with one element")
 
+    batch_size = int(src.shape[0])
     num_heads = int(src.shape[1])
     head_dim = int(src.shape[3])
     block_d = 128
-    grid = (num_heads, triton.cdiv(head_dim, block_d))
+    grid = (batch_size, num_heads, triton.cdiv(head_dim, block_d))
     _cache_write_q1_kernel[grid](
         src,
         dst,

@@ -29,11 +29,7 @@ from triton_kernels.attention_prepost import (
     prepare_decode_inputs_triton,
     residual_add_triton,
 )
-from triton_kernels.attention_decode import (
-    attention_decode_only_triton,
-    batched_attention_decode_q1_triton,
-    pack_attention_weights,
-)
+from triton_kernels.attention_decode import attention_decode_triton, pack_attention_weights
 from triton_kernels.mlp_elementwise import silu_mul_triton
 from triton_kernels.rmsnorm import rmsnorm_triton
 
@@ -325,74 +321,27 @@ def _patch_mlp_elementwise_for_graph(model: torch.nn.Module) -> None:
 
 
 def _patch_attention_for_graph(model: torch.nn.Module) -> None:
-    def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
-        return torch.cat((-x2, x1), dim=-1)
-
-    def _apply_deepseek_rotary(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        cos = cos[position_ids].unsqueeze(1)
-        sin = sin[position_ids].unsqueeze(1)
-
-        bsz, heads, seq_len, dim = q.shape
-        q = q.view(bsz, heads, seq_len, dim // 2, 2).transpose(4, 3).reshape(bsz, heads, seq_len, dim)
-
-        bsz, heads, seq_len, dim = k.shape
-        k = k.view(bsz, heads, seq_len, dim // 2, 2).transpose(4, 3).reshape(bsz, heads, seq_len, dim)
-
-        return (q * cos) + (_rotate_half(q) * sin), (k * cos) + (_rotate_half(k) * sin)
-
-    def _batched_triton_decode_attention_forward(
+    def _triton_decode_attention_forward(
         self,
         hidden_states: torch.Tensor,
         position_ids: torch.Tensor,
         past_key_value: Cache,
     ) -> tuple[torch.Tensor, None, Cache]:
-        batch_size, q_len, _ = hidden_states.shape
-        q = self.q_proj(hidden_states)
-        q = q.view(batch_size, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
-        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
-
-        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
-        compressed_kv, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        k_pe = k_pe.view(batch_size, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
-        kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
-        kv = kv.view(batch_size, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim).transpose(1, 2)
-        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-
         layer_cache = past_key_value.layers[self.layer_idx]
-        kv_seq_len = layer_cache.max_cache_len if layer_cache.static_mode else layer_cache.seq_len + q_len
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        q_pe, k_pe = _apply_deepseek_rotary(q_pe, k_pe, cos, sin, position_ids)
-
-        query_states = torch.empty(
-            (batch_size, self.num_heads, q_len, self.q_head_dim),
-            device=hidden_states.device,
-            dtype=hidden_states.dtype,
-        )
-        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
-        query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
-
-        key_states = torch.empty_like(query_states)
-        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
-        key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
-        key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, {"sin": sin, "cos": cos})
-
-        attn_output = batched_attention_decode_q1_triton(
-            query_states=query_states,
-            key_states=key_states,
-            value_states=value_states,
+        kv_seq_len = layer_cache.max_cache_len if layer_cache.static_mode else layer_cache.seq_len + int(hidden_states.shape[1])
+        cos, sin = self.rotary_emb(hidden_states, seq_len=kv_seq_len)
+        attn_output = attention_decode_triton(
+            hidden_states=hidden_states,
+            cos=cos,
+            sin=sin,
+            position_ids=position_ids,
             cache_position=layer_cache.cache_position,
+            key_cache=layer_cache.keys,
+            value_cache=layer_cache.values,
+            packed=self._graph_packed_attention_weights,
             softmax_scale=float(self.softmax_scale),
         )
-        attn_output = attn_output.transpose(1, 2).contiguous().reshape(batch_size, q_len, self.num_heads * self.v_head_dim)
-        return self.o_proj(attn_output), None, past_key_value
+        return attn_output, None, past_key_value
 
     def _graph_attention_forward(
         self,
@@ -408,7 +357,6 @@ def _patch_attention_for_graph(model: torch.nn.Module) -> None:
             hidden_states.device.type == "cuda"
             and hidden_states.dtype == torch.bfloat16
             and hidden_states.shape[1] == 1
-            and hidden_states.shape[0] > 1
             and past_key_value is not None
             and use_cache
             and position_ids is not None
@@ -416,45 +364,17 @@ def _patch_attention_for_graph(model: torch.nn.Module) -> None:
             and not output_attentions
             and getattr(self, "_graph_triton_full_attention", False)
         ):
-            return _batched_triton_decode_attention_forward(self, hidden_states, position_ids, past_key_value)
+            return _triton_decode_attention_forward(self, hidden_states, position_ids, past_key_value)
 
-        if (
-            hidden_states.device.type != "cuda"
-            or hidden_states.dtype != torch.bfloat16
-            or hidden_states.shape[0] != 1
-            or hidden_states.shape[1] != 1
-            or past_key_value is None
-            or not use_cache
-            or position_ids is None
-            or attention_mask is None
-            or output_attentions
-            or not getattr(self, "_graph_triton_full_attention", False)
-        ):
-            return self._graph_original_attention_forward(
-                hidden_states,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_value=past_key_value,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-                **kwargs,
-            )
-
-        layer_cache = past_key_value.layers[self.layer_idx]
-        kv_seq_len = layer_cache.max_cache_len
-        cos, sin = self.rotary_emb(hidden_states, seq_len=kv_seq_len)
-        attn_output = attention_decode_only_triton(
-            hidden_states=hidden_states,
-            cos=cos,
-            sin=sin,
+        return self._graph_original_attention_forward(
+            hidden_states,
+            attention_mask=attention_mask,
             position_ids=position_ids,
-            cache_position=layer_cache.cache_position,
-            key_cache=layer_cache.keys,
-            value_cache=layer_cache.values,
-            packed=self._graph_packed_attention_weights,
-            softmax_scale=float(self.softmax_scale),
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            **kwargs,
         )
-        return attn_output, None, past_key_value
 
     for layer in model.model.layers:
         attn = layer.self_attn
@@ -612,10 +532,9 @@ def _run_graph_decode(
     batch_size = int(input_ids.shape[0])
     prompt_len = int(input_ids.shape[1])
     max_cache_len = prompt_len + max_new_tokens + 8
-    use_full_sota_attention = batch_size == 1
     use_cuda_graph_decode = True
     graph_cache = GraphCache(num_layers=model.config.num_hidden_layers, max_cache_len=max_cache_len)
-    graph_cache.set_triton_cache_write(use_full_sota_attention)
+    graph_cache.set_triton_cache_write(True)
     _patch_rmsnorm_for_graph(model)
     _patch_mlp_elementwise_for_graph(model)
     _patch_attention_for_graph(model)
@@ -693,7 +612,7 @@ def _run_graph_decode(
 
     return {
         "batch_size": batch_size,
-        "path": "triton_sota_graph" if use_full_sota_attention else "batched_cuda_graph",
+        "path": "triton_decode_graph",
         "generated_ids": output_generated_ids,
         "decode_tokens": batch_size * max(max_new_tokens - 1, 0),
         "prefill_seconds": prefill_seconds,

@@ -24,12 +24,12 @@ Target configuration:
 - decode shape: `q_len=1`
 - default output length: `100` new tokens
 
-The goal is not general inference serving. The optimized `src/sota.py` path is
-still batch=1 specific. `src/sota.py` accepts batch sweeps for reporting, but
-`batch_size=1` uses the hand-written Triton CUDA graph path while `batch_size>1`
-is explicitly reported as a batched eager fallback. Serving baselines under
-`baselines/` include separate batch sweeps over `1 2 4 8 16 32 64 128 256 512`
-for SGLang and vLLM.
+The goal is not general inference serving. The optimized `src/sota.py` path now
+uses shared q_len=1 decode kernels across batch sizes for the custom attention
+and MoE path. This improves batch scaling substantially, but the unified batched
+path currently sacrifices the old batch=1 peak throughput because it no longer
+uses the earlier single-token-only attention/MoE specializations. Serving
+baselines under `baselines/` are capped at batch size 256 for comparable plots.
 
 The kernel optimization goal is to iterate quickly on fixed-shape decode kernels
 and measure whether they improve real decode latency.

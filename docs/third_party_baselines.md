@@ -79,26 +79,25 @@ Notes:
 ## src/sota Batch Sweep
 
 The current custom Triton path was rerun on physical GPU 2 on April 25, 2026
-after changing batched MoE from per-route GEMV to expert-grouped GEMM-style
-Triton kernels and adding a batched q_len=1 Triton decode-attention kernel. Shape is input length 24 and output length 100. Logs are under
-`/tmp/dsv2lite_attn_opt_sweep_20260425_130635`.
+after switching decode attention and MoE to shared batched Triton paths. MoE now
+uses shape-keyed tile autotuning over the same grouped-kernel implementation;
+there is no separate `bsz=1` MoE kernel dispatch in this run. Shape is input
+length 24 and output length 100. Log: `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log`.
 
 | Batch | Path | Decode tok/s |
 | ---: | --- | ---: |
-| 1 | `triton_sota_graph` | 136.77 |
-| 2 | `batched_cuda_graph` | 187.20 |
-| 4 | `batched_cuda_graph` | 371.52 |
-| 8 | `batched_cuda_graph` | 507.24 |
-| 16 | `batched_cuda_graph` | 1196.57 |
-| 32 | `batched_cuda_graph` | 1397.72 |
-| 64 | `batched_cuda_graph` | 2284.81 |
-| 128 | `batched_cuda_graph` | 3160.33 |
-| 256 | `batched_cuda_graph` | 3775.20 |
-| 512 | — | OOM during `graph_cache.snapshot()` |
+| 1 | `triton_decode_graph` | 111.02 |
+| 2 | `triton_decode_graph` | 210.27 |
+| 4 | `triton_decode_graph` | 414.69 |
+| 8 | `triton_decode_graph` | 815.26 |
+| 16 | `triton_decode_graph` | 1581.12 |
+| 32 | `triton_decode_graph` | 2785.18 |
+| 64 | `triton_decode_graph` | 4425.15 |
+| 128 | `triton_decode_graph` | 5521.96 |
+| 256 | `triton_decode_graph` | 6051.28 |
 
-Note: after grouped MoE, 256 now runs successfully. The 512 run still fails
-while cloning the prompt KV cache snapshot, with the process using essentially
-the full 47.40 GiB A6000 memory.
+Note: all plotted backends are capped at batch size 256. The earlier 512 point
+is intentionally excluded from the plot and table.
 
 ## Reproduction Commands
 

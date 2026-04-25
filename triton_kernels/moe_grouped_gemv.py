@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import torch
 import triton
@@ -18,10 +19,22 @@ class PackedRoutedExperts:
     num_experts: int
     topk: int
 
+    autotune_cache: ClassVar[dict[tuple[int, int, int, torch.device], tuple[int, int, int]]] = {}
+
     def to(self, *args, **kwargs) -> "PackedRoutedExperts":
         self.gate_up_weights = self.gate_up_weights.to(*args, **kwargs)
         self.down_weights = self.down_weights.to(*args, **kwargs)
         return self
+
+
+MOE_GROUPED_TILE_CANDIDATES: tuple[tuple[int, int, int], ...] = (
+    (4, 16, 64),
+    (8, 16, 64),
+    (16, 16, 64),
+    (16, 32, 64),
+    (32, 32, 64),
+    (32, 64, 128),
+)
 
 
 @triton.jit
@@ -458,29 +471,26 @@ def _grouped_gate_up_swiglu_kernel(
 
 
 @triton.jit
-def _grouped_down_atomic_kernel(
+def _grouped_down_partial_kernel(
     hidden_ptr,
-    topk_weight_ptr,
     down_ptr,
     route_indices_ptr,
     counts_ptr,
     block_count_ptr,
     block_experts_ptr,
     block_offsets_ptr,
-    out_ptr,
+    partial_ptr,
     total_routes,
     topk,
     hidden_size,
     intermediate_size,
     hidden_stride_r,
     hidden_stride_k,
-    topk_weight_stride_b,
-    topk_weight_stride_s,
     down_stride_e,
     down_stride_m,
     down_stride_k,
-    out_stride_b,
-    out_stride_m,
+    partial_stride_r,
+    partial_stride_m,
     BLOCK_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_K: tl.constexpr,
@@ -500,8 +510,6 @@ def _grouped_down_atomic_kernel(
         mask=route_mask,
         other=0,
     ).to(tl.int32)
-    token_idx = route_idx // topk
-    slot_idx = route_idx - token_idx * topk
 
     row_offsets = row_block_idx * BLOCK_M + tl.arange(0, BLOCK_M)
     row_mask = row_offsets < hidden_size
@@ -528,16 +536,9 @@ def _grouped_down_atomic_kernel(
         acc += tl.dot(hidden, down_w)
         k_block += 1
 
-    weights = tl.load(
-        topk_weight_ptr + token_idx * topk_weight_stride_b + slot_idx * topk_weight_stride_s,
-        mask=route_mask,
-        other=0.0,
-    ).to(tl.float32)
-    acc *= weights[:, None]
-    tl.atomic_add(
-        out_ptr + token_idx[:, None] * out_stride_b + row_offsets[None, :] * out_stride_m,
+    tl.store(
+        partial_ptr + route_idx[:, None] * partial_stride_r + row_offsets[None, :] * partial_stride_m,
         acc,
-        sem="relaxed",
         mask=route_mask[:, None] & row_mask[None, :],
     )
 
@@ -629,8 +630,6 @@ def packed_routed_moe(
     packed: PackedRoutedExperts,
     output_dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
-    if x.device.type == "cuda" and x.shape[0] == 1 and topk_ids.shape[0] == 1:
-        return grouped_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
     if x.device.type == "cuda" and x.ndim == 2 and topk_ids.ndim == 2 and topk_ids.shape[0] == x.shape[0]:
         return batched_grouped_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
     return packed_routed_moe_eager(x, topk_ids, topk_weight, packed)
@@ -645,8 +644,6 @@ def batched_grouped_routed_moe(
 ) -> torch.Tensor:
     if x.ndim != 2 or topk_ids.ndim != 2 or topk_weight.ndim != 2:
         raise ValueError("batched_grouped_routed_moe expects x=[B,H], topk tensors=[B,topk]")
-    if x.shape[0] == 1:
-        return grouped_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
     if topk_ids.shape != topk_weight.shape or topk_ids.shape[0] != x.shape[0]:
         raise ValueError("topk_ids/topk_weight must have shape [B, topk]")
     if topk_ids.shape[1] != packed.topk:
@@ -661,27 +658,21 @@ def batched_grouped_routed_moe(
     return batched_grouped_routed_moe_grouped_triton(x, topk_ids, topk_weight, packed, output_dtype=output_dtype)
 
 
-def batched_grouped_routed_moe_grouped_triton(
+def _run_batched_grouped_routed_moe_grouped_triton(
     x: torch.Tensor,
     topk_ids: torch.Tensor,
     topk_weight: torch.Tensor,
     packed: PackedRoutedExperts,
-    output_dtype: torch.dtype | None = None,
+    output_dtype: torch.dtype,
+    block_n: int,
+    block_m: int,
+    block_k: int,
 ) -> torch.Tensor:
-    x = x.contiguous()
-    topk_ids = topk_ids.contiguous()
-    topk_weight = topk_weight.contiguous()
     batch_size = int(x.shape[0])
     topk = packed.topk
     total_routes = batch_size * topk
     hidden_size = packed.hidden_size
     intermediate_size = packed.intermediate_size
-    if output_dtype is None:
-        output_dtype = x.dtype
-
-    block_n = 8
-    block_m = 32
-    block_k = 64
     max_blocks = total_routes
 
     counts = torch.empty((packed.num_experts,), device=x.device, dtype=torch.int32)
@@ -690,17 +681,11 @@ def batched_grouped_routed_moe_grouped_triton(
     block_experts = torch.empty((max_blocks,), device=x.device, dtype=torch.int32)
     block_offsets = torch.empty((max_blocks,), device=x.device, dtype=torch.int32)
     routed_hidden = torch.empty((total_routes, intermediate_size), device=x.device, dtype=torch.bfloat16)
-    out_fp32 = torch.empty((batch_size, hidden_size), device=x.device, dtype=torch.float32)
+    partial = torch.empty((total_routes, hidden_size), device=x.device, dtype=torch.float32)
     out = torch.empty((batch_size, hidden_size), device=x.device, dtype=output_dtype)
 
     _zero_i32_kernel[(triton.cdiv(packed.num_experts + 1, 256),)](counts, packed.num_experts, BLOCK=256, num_warps=4)
     _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
-    _zero_fp32_kernel[(triton.cdiv(batch_size * hidden_size, 256),)](
-        out_fp32,
-        batch_size * hidden_size,
-        BLOCK=256,
-        num_warps=4,
-    )
     _build_route_indices_kernel[(total_routes,)](
         topk_ids,
         counts,
@@ -744,44 +729,136 @@ def batched_grouped_routed_moe_grouped_triton(
         BLOCK_K=block_k,
         num_warps=4,
     )
-    _grouped_down_atomic_kernel[(max_blocks, triton.cdiv(hidden_size, block_m))](
+    _grouped_down_partial_kernel[(max_blocks, triton.cdiv(hidden_size, block_m))](
         routed_hidden,
-        topk_weight,
         packed.down_weights,
         route_indices,
         counts,
         block_count,
         block_experts,
         block_offsets,
-        out_fp32,
+        partial,
         total_routes,
         topk,
         hidden_size,
         intermediate_size,
         routed_hidden.stride(0),
         routed_hidden.stride(1),
-        topk_weight.stride(0),
-        topk_weight.stride(1),
         packed.down_weights.stride(0),
         packed.down_weights.stride(1),
         packed.down_weights.stride(2),
-        out_fp32.stride(0),
-        out_fp32.stride(1),
+        partial.stride(0),
+        partial.stride(1),
         BLOCK_N=block_n,
         BLOCK_M=block_m,
         BLOCK_K=block_k,
         num_warps=4,
     )
-    _cast_output_kernel[(triton.cdiv(batch_size * hidden_size, 256),)](
-        out_fp32,
+    _batched_down_reduce_topk6_kernel[(batch_size, triton.cdiv(hidden_size, block_m))](
+        partial,
+        topk_weight,
         out,
-        batch_size * hidden_size,
+        hidden_size,
+        topk,
+        partial.stride(0),
+        partial.stride(1),
+        topk_weight.stride(0),
+        topk_weight.stride(1),
+        out.stride(0),
+        out.stride(1),
+        BLOCK_M=block_m,
         OUT_DTYPE=tl.bfloat16 if output_dtype is torch.bfloat16 else tl.float32,
-        BLOCK=256,
         num_warps=4,
     )
     return out
 
+
+def _default_moe_grouped_tile(batch_size: int) -> tuple[int, int, int]:
+    if batch_size >= 128:
+        return 32, 64, 128
+    if batch_size >= 16:
+        return 16, 32, 64
+    return 4, 32, 64
+
+
+def _select_moe_grouped_tile(
+    x: torch.Tensor,
+    topk_ids: torch.Tensor,
+    topk_weight: torch.Tensor,
+    packed: PackedRoutedExperts,
+    output_dtype: torch.dtype,
+) -> tuple[int, int, int]:
+    batch_size = int(x.shape[0])
+    key = (batch_size, packed.hidden_size, packed.intermediate_size, x.device)
+    cached = PackedRoutedExperts.autotune_cache.get(key)
+    if cached is not None:
+        return cached
+    if torch.cuda.is_current_stream_capturing():
+        tile = _default_moe_grouped_tile(batch_size)
+        PackedRoutedExperts.autotune_cache[key] = tile
+        return tile
+
+    best_tile = _default_moe_grouped_tile(batch_size)
+    best_ms = float("inf")
+    for block_n, block_m, block_k in MOE_GROUPED_TILE_CANDIDATES:
+        _run_batched_grouped_routed_moe_grouped_triton(
+            x,
+            topk_ids,
+            topk_weight,
+            packed,
+            output_dtype,
+            block_n,
+            block_m,
+            block_k,
+        )
+        torch.cuda.synchronize()
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        for _ in range(3):
+            _run_batched_grouped_routed_moe_grouped_triton(
+                x,
+                topk_ids,
+                topk_weight,
+                packed,
+                output_dtype,
+                block_n,
+                block_m,
+                block_k,
+            )
+        end_event.record()
+        torch.cuda.synchronize()
+        elapsed_ms = float(start_event.elapsed_time(end_event)) / 3.0
+        if elapsed_ms < best_ms:
+            best_ms = elapsed_ms
+            best_tile = (block_n, block_m, block_k)
+    PackedRoutedExperts.autotune_cache[key] = best_tile
+    return best_tile
+
+
+def batched_grouped_routed_moe_grouped_triton(
+    x: torch.Tensor,
+    topk_ids: torch.Tensor,
+    topk_weight: torch.Tensor,
+    packed: PackedRoutedExperts,
+    output_dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    x = x.contiguous()
+    topk_ids = topk_ids.contiguous()
+    topk_weight = topk_weight.contiguous()
+    if output_dtype is None:
+        output_dtype = x.dtype
+    block_n, block_m, block_k = _select_moe_grouped_tile(x, topk_ids, topk_weight, packed, output_dtype)
+    return _run_batched_grouped_routed_moe_grouped_triton(
+        x,
+        topk_ids,
+        topk_weight,
+        packed,
+        output_dtype,
+        block_n,
+        block_m,
+        block_k,
+    )
 
 def batched_grouped_routed_moe_route_gemv(
     x: torch.Tensor,

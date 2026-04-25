@@ -65,18 +65,18 @@ def rmsnorm_triton(hidden_states: torch.Tensor, weight: torch.Tensor, eps: float
         raise NotImplementedError("rmsnorm_triton only supports bf16/fp16 input")
     if weight.dtype not in (torch.bfloat16, torch.float16, torch.float32):
         raise NotImplementedError("rmsnorm_triton only supports bf16/fp16/fp32 weight")
-    if not hidden_states.is_contiguous():
-        raise NotImplementedError("rmsnorm_triton requires contiguous hidden_states")
     if not weight.is_contiguous():
         raise NotImplementedError("rmsnorm_triton requires contiguous weight")
 
     x = hidden_states
     shape = x.shape
     n_cols = int(shape[-1])
-    x_2d = x.reshape(-1, n_cols)
+    x_2d = x.view(-1, n_cols)
+    if x_2d.stride(1) != 1:
+        raise NotImplementedError("rmsnorm_triton requires last dimension to be contiguous")
     rows = int(x_2d.shape[0])
 
-    y = torch.empty_like(x_2d)
+    y = torch.empty((rows, n_cols), device=x.device, dtype=x.dtype)
     block_col = 512
 
     _rmsnorm_kernel[(rows,)](

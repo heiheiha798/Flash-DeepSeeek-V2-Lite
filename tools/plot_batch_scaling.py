@@ -8,15 +8,15 @@ from pathlib import Path
 BATCHES = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 SERIES = {
     "src/sota": {
-        1: 136.77,
-        2: 187.20,
-        4: 371.52,
-        8: 507.24,
-        16: 1196.57,
-        32: 1397.72,
-        64: 2284.81,
-        128: 3160.33,
-        256: 3775.20,
+        1: 111.02,
+        2: 210.27,
+        4: 414.69,
+        8: 815.26,
+        16: 1581.12,
+        32: 2785.18,
+        64: 4425.15,
+        128: 5521.96,
+        256: 6051.28,
     },
     "SGLang": {
         1: 110.26,
@@ -80,10 +80,15 @@ def x_pos(batch: int) -> float:
     return LEFT + math.log2(batch) / math.log2(max(BATCHES)) * PLOT_W
 
 
+Y_MIN = 64.0
+Y_MAX = 8192.0
+Y_TICKS = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
+
+
 def y_pos(tps: float) -> float:
-    min_log = math.log10(50.0)
-    max_log = math.log10(7000.0)
-    return TOP + (max_log - math.log10(tps)) / (max_log - min_log) * PLOT_H
+    min_log = math.log2(Y_MIN)
+    max_log = math.log2(Y_MAX)
+    return TOP + (max_log - math.log2(tps)) / (max_log - min_log) * PLOT_H
 
 
 def marker_svg(kind: str, x: float, y: float, color: str) -> str:
@@ -106,7 +111,6 @@ def text(x: float, y: float, value: str, **attrs: str) -> str:
 
 
 def build_svg() -> str:
-    y_ticks = [50, 100, 200, 500, 1000, 2000, 5000]
     elements: list[str] = []
     elements.append(f'<rect width="{WIDTH}" height="{HEIGHT}" fill="white" />')
     elements.append(text(WIDTH / 2, 32, "Batch Scaling", text_anchor="middle", font_size="24", font_weight="700"))
@@ -117,10 +121,10 @@ def build_svg() -> str:
         elements.append(f'<line x1="{x:.1f}" y1="{TOP}" x2="{x:.1f}" y2="{TOP + PLOT_H}" stroke="#e8e8e8" stroke-width="1" />')
         elements.append(text(x, TOP + PLOT_H + 28, str(batch), text_anchor="middle", font_size="13", fill="#333"))
 
-    for tick in y_ticks:
-        y = y_pos(tick)
+    for tick in Y_TICKS:
+        y = y_pos(float(tick))
         elements.append(f'<line x1="{LEFT}" y1="{y:.1f}" x2="{LEFT + PLOT_W}" y2="{y:.1f}" stroke="#e8e8e8" stroke-width="1" />')
-        label = f"{tick // 1000}k" if tick >= 1000 else str(tick)
+        label = f"{tick // 1024}k" if tick >= 1024 else str(tick)
         elements.append(text(LEFT - 12, y + 4, label, text_anchor="end", font_size="13", fill="#333"))
 
     elements.append(f'<rect x="{LEFT}" y="{TOP}" width="{PLOT_W}" height="{PLOT_H}" fill="none" stroke="#222" stroke-width="1.2" />')
