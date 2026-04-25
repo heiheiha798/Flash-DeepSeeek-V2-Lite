@@ -80,23 +80,25 @@ Notes:
 ## src Batch Sweep
 
 The current custom Triton path was rerun on physical GPU 3 on April 25, 2026
-after the batch attention linear tile update. Shape is input length 24 and
-output length 100. Logs are under
-`/tmp/dsv2lite_src_rerun_20260425_232359`. The table compares two forced
-dispatch modes: batching kernels for every batch size, and small-GEMV kernels
-for every measured batch size.
+after the batch attention linear tile update, and the small-GEMV curve was
+refreshed on April 26, 2026 after restoring combined gate/up dot in the small
+MoE kernels. Shape is input length 24 and output length 100. Batch-kernel logs
+are under `/tmp/dsv2lite_src_rerun_20260425_232359`; refreshed small-GEMV logs
+are under `/tmp/dsv2lite_small_combined_all_20260426_000346`. The table compares
+two forced dispatch modes: batching kernels for every batch size, and
+small-GEMV kernels for every measured batch size.
 
 | Batch | Forced batching tok/s | Forced small-GEMV tok/s |
 | ---: | ---: | ---: |
-| 1 | 154.03 | 184.54 |
-| 2 | 270.65 | 240.28 |
-| 4 | 518.80 | 415.35 |
-| 8 | 958.35 | 564.82 |
-| 16 | 1914.46 | 716.83 |
-| 32 | 3608.94 | 820.20 |
-| 64 | 6237.99 | 900.45 |
-| 128 | 9109.06 | 950.33 |
-| 256 | 11428.26 | 981.90 |
+| 1 | 154.03 | 197.98 |
+| 2 | 270.65 | 272.59 |
+| 4 | 518.80 | 460.22 |
+| 8 | 958.35 | 614.82 |
+| 16 | 1914.46 | 802.99 |
+| 32 | 3608.94 | 918.80 |
+| 64 | 6237.99 | 1006.51 |
+| 128 | 9109.06 | 1057.46 |
+| 256 | 11428.26 | 1089.71 |
 
 Note: all plotted backends are capped at batch size 256. The earlier 512 point
 is intentionally excluded from the plot and table.
@@ -137,4 +139,5 @@ The refreshed `src/run.py` logs for the current table used:
 
 ```bash
 RUN_DIR=/tmp/dsv2lite_src_rerun_20260425_232359
+SMALL_RUN_DIR=/tmp/dsv2lite_small_combined_all_20260426_000346
 ```

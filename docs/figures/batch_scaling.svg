@@ -53,16 +53,16 @@
 <polygon points="623.0,150.6 617.0,156.6 623.0,162.6 629.0,156.6" fill="#d62728" />
 <polygon points="711.5,117.4 705.5,123.4 711.5,129.4 717.5,123.4" fill="#d62728" />
 <polygon points="800.0,97.6 794.0,103.6 800.0,109.6 806.0,103.6" fill="#d62728" />
-<polyline points="92.0,465.2 180.5,442.1 269.0,394.1 357.5,367.1 446.0,346.3 534.5,334.5 623.0,326.3 711.5,321.5 800.0,318.7" fill="none" stroke="#ff7f0e" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<polygon points="92.0,459.2 86.0,465.2 92.0,471.2 98.0,465.2" fill="#ff7f0e" />
-<polygon points="180.5,436.1 174.5,442.1 180.5,448.1 186.5,442.1" fill="#ff7f0e" />
-<polygon points="269.0,388.1 263.0,394.1 269.0,400.1 275.0,394.1" fill="#ff7f0e" />
-<polygon points="357.5,361.1 351.5,367.1 357.5,373.1 363.5,367.1" fill="#ff7f0e" />
-<polygon points="446.0,340.3 440.0,346.3 446.0,352.3 452.0,346.3" fill="#ff7f0e" />
-<polygon points="534.5,328.5 528.5,334.5 534.5,340.5 540.5,334.5" fill="#ff7f0e" />
-<polygon points="623.0,320.3 617.0,326.3 623.0,332.3 629.0,326.3" fill="#ff7f0e" />
-<polygon points="711.5,315.5 705.5,321.5 711.5,327.5 717.5,321.5" fill="#ff7f0e" />
-<polygon points="800.0,312.7 794.0,318.7 800.0,324.7 806.0,318.7" fill="#ff7f0e" />
+<polyline points="92.0,459.0 180.5,431.0 269.0,385.1 357.5,359.7 446.0,336.3 534.5,324.5 623.0,316.5 711.5,312.2 800.0,309.5" fill="none" stroke="#ff7f0e" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,453.0 86.0,459.0 92.0,465.0 98.0,459.0" fill="#ff7f0e" />
+<polygon points="180.5,425.0 174.5,431.0 180.5,437.0 186.5,431.0" fill="#ff7f0e" />
+<polygon points="269.0,379.1 263.0,385.1 269.0,391.1 275.0,385.1" fill="#ff7f0e" />
+<polygon points="357.5,353.7 351.5,359.7 357.5,365.7 363.5,359.7" fill="#ff7f0e" />
+<polygon points="446.0,330.3 440.0,336.3 446.0,342.3 452.0,336.3" fill="#ff7f0e" />
+<polygon points="534.5,318.5 528.5,324.5 534.5,330.5 540.5,324.5" fill="#ff7f0e" />
+<polygon points="623.0,310.5 617.0,316.5 623.0,322.5 629.0,316.5" fill="#ff7f0e" />
+<polygon points="711.5,306.2 705.5,312.2 711.5,318.2 717.5,312.2" fill="#ff7f0e" />
+<polygon points="800.0,303.5 794.0,309.5 800.0,315.5 806.0,309.5" fill="#ff7f0e" />
 <polyline points="92.0,474.9 180.5,436.3 269.0,402.1 357.5,361.9 446.0,321.3 534.5,276.7 623.0,225.8 711.5,196.8 800.0,145.4" fill="none" stroke="#1f77b4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
 <rect x="87.0" y="469.9" width="10" height="10" fill="#1f77b4" />
 <rect x="175.5" y="431.3" width="10" height="10" fill="#1f77b4" />
@@ -99,7 +99,7 @@
 <text x="890.0" y="105.0" font-size="14" fill="#111">src/batch (11428 tok/s @ bsz 256)</text>
 <line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#ff7f0e" stroke-width="3" stroke-linecap="round" />
 <polygon points="861.0,148.0 855.0,154.0 861.0,160.0 867.0,154.0" fill="#ff7f0e" />
-<text x="890.0" y="159.0" font-size="14" fill="#111">src/small GEMV (982 tok/s @ bsz 256)</text>
+<text x="890.0" y="159.0" font-size="14" fill="#111">src/small GEMV (1090 tok/s @ bsz 256)</text>
 <line x1="844" y1="208.0" x2="878" y2="208.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
 <rect x="856.0" y="203.0" width="10" height="10" fill="#1f77b4" />
 <text x="890.0" y="213.0" font-size="14" fill="#111">SGLang (7094 tok/s @ bsz 256)</text>

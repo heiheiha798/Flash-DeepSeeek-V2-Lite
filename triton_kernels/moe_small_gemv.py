@@ -75,30 +75,31 @@ def _fused_gate_up_swiglu_kernel(
     expert_id = tl.load(topk_ids_ptr + expert_idx).to(tl.int32)
     gate_up_base_ptr = gate_up_ptr + expert_id * gate_up_stride_e
     k_offsets_base = tl.arange(0, BLOCK_K)
-    gate_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
-    up_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    gate_up_acc = tl.zeros((2, BLOCK_M), dtype=tl.float32)
     k_block = 0
     while k_block * BLOCK_K < hidden_size:
         k_start = k_block * BLOCK_K
         k_offsets = k_start + k_offsets_base
         k_mask = k_offsets < hidden_size
         x = tl.load(x_ptr + k_offsets, mask=k_mask, other=0.0).to(tl.float32)
-        gate_w = tl.load(
-            gate_up_base_ptr + k_offsets[:, None] * gate_up_stride_k + row_offsets[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        ).to(tl.float32)
-        up_w = tl.load(
-            gate_up_base_ptr
-            + k_offsets[:, None] * gate_up_stride_k
-            + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        ).to(tl.float32)
-        gate_acc += tl.reshape(tl.dot(x[None, :], gate_w), (BLOCK_M,))
-        up_acc += tl.reshape(tl.dot(x[None, :], up_w), (BLOCK_M,))
+        x_col = x[:, None]
+
+        gate_up_block_ptr = tl.make_block_ptr(
+            base=gate_up_base_ptr,
+            shape=(2 * intermediate_size, hidden_size),
+            strides=(gate_up_stride_m, gate_up_stride_k),
+            offsets=(row_start, k_start),
+            block_shape=(2 * BLOCK_M, BLOCK_K),
+            order=(1, 0),
+        )
+        gate_up_w = tl.load(gate_up_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+
+        gate_up_acc += tl.reshape(tl.dot(gate_up_w, x_col), (2, BLOCK_M))
         k_block += 1
 
+    gate_up_rows = tl.arange(0, 2)[:, None]
+    gate_acc = tl.sum(tl.where(gate_up_rows == 0, gate_up_acc, 0.0), axis=0)
+    up_acc = tl.sum(tl.where(gate_up_rows == 1, gate_up_acc, 0.0), axis=0)
     routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
     hidden_ptrs = hidden_ptr + expert_idx * hidden_stride_e + row_offsets * hidden_stride_m
     tl.store(hidden_ptrs, routed_hidden, mask=row_mask)
@@ -222,30 +223,31 @@ def _batched_fused_gate_up_swiglu_kernel(
     expert_id = tl.load(topk_ids_ptr + token_idx * topk_ids_stride_b + slot_idx * topk_ids_stride_s).to(tl.int32)
     gate_up_base_ptr = gate_up_ptr + expert_id * gate_up_stride_e
     k_offsets_base = tl.arange(0, BLOCK_K)
-    gate_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
-    up_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    gate_up_acc = tl.zeros((2, BLOCK_M), dtype=tl.float32)
     k_block = 0
     while k_block * BLOCK_K < hidden_size:
         k_start = k_block * BLOCK_K
         k_offsets = k_start + k_offsets_base
         k_mask = k_offsets < hidden_size
         x = tl.load(x_ptr + token_idx * x_stride_b + k_offsets * x_stride_k, mask=k_mask, other=0.0).to(tl.float32)
-        gate_w = tl.load(
-            gate_up_base_ptr + k_offsets[:, None] * gate_up_stride_k + row_offsets[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        ).to(tl.float32)
-        up_w = tl.load(
-            gate_up_base_ptr
-            + k_offsets[:, None] * gate_up_stride_k
-            + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        ).to(tl.float32)
-        gate_acc += tl.reshape(tl.dot(x[None, :], gate_w), (BLOCK_M,))
-        up_acc += tl.reshape(tl.dot(x[None, :], up_w), (BLOCK_M,))
+        x_col = x[:, None]
+
+        gate_up_block_ptr = tl.make_block_ptr(
+            base=gate_up_base_ptr,
+            shape=(2 * intermediate_size, hidden_size),
+            strides=(gate_up_stride_m, gate_up_stride_k),
+            offsets=(row_start, k_start),
+            block_shape=(2 * BLOCK_M, BLOCK_K),
+            order=(1, 0),
+        )
+        gate_up_w = tl.load(gate_up_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+
+        gate_up_acc += tl.reshape(tl.dot(gate_up_w, x_col), (2, BLOCK_M))
         k_block += 1
 
+    gate_up_rows = tl.arange(0, 2)[:, None]
+    gate_acc = tl.sum(tl.where(gate_up_rows == 0, gate_up_acc, 0.0), axis=0)
+    up_acc = tl.sum(tl.where(gate_up_rows == 1, gate_up_acc, 0.0), axis=0)
     routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
     hidden_ptrs = hidden_ptr + route_idx * hidden_stride_r + row_offsets * hidden_stride_m
     tl.store(hidden_ptrs, routed_hidden, mask=row_mask)
