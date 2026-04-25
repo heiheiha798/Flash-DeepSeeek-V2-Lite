@@ -464,9 +464,15 @@ def _run_batched_grouped_routed_moe_grouped_triton(
     total_routes = batch_size * topk
     hidden_size = packed.hidden_size
     intermediate_size = packed.intermediate_size
-    max_blocks = total_routes
     gate_block_n, gate_block_m, gate_block_k = gate_tile
     down_block_n, down_block_m, down_block_k = down_tile
+    if _use_tight_grouped_grid():
+        gate_max_blocks = _max_grouped_route_blocks(total_routes, packed.num_experts, gate_block_n)
+        down_max_blocks = _max_grouped_route_blocks(total_routes, packed.num_experts, down_block_n)
+    else:
+        gate_max_blocks = total_routes
+        down_max_blocks = total_routes
+    max_blocks = max(gate_max_blocks, down_max_blocks)
 
     counts = torch.empty((packed.num_experts,), device=x.device, dtype=torch.int32)
     route_indices = torch.empty((packed.num_experts, total_routes), device=x.device, dtype=torch.int32)
@@ -499,7 +505,7 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         BLOCK_N=gate_block_n,
         num_warps=1,
     )
-    _grouped_gate_up_swiglu_kernel[(max_blocks, triton.cdiv(intermediate_size, gate_block_m))](
+    _grouped_gate_up_swiglu_kernel[(gate_max_blocks, triton.cdiv(intermediate_size, gate_block_m))](
         x,
         gate_up_weights,
         route_indices,
@@ -534,7 +540,7 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         BLOCK_N=down_block_n,
         num_warps=1,
     )
-    _grouped_down_partial_kernel[(max_blocks, triton.cdiv(hidden_size, down_block_m))](
+    _grouped_down_partial_kernel[(down_max_blocks, triton.cdiv(hidden_size, down_block_m))](
         routed_hidden,
         down_weights,
         route_indices,
@@ -590,6 +596,15 @@ def _default_moe_grouped_tile(batch_size: int) -> tuple[int, int, int]:
     if batch_size >= 2:
         return 16, 64, 128
     return 8, 32, 64
+
+
+def _max_grouped_route_blocks(total_routes: int, num_experts: int, block_n: int) -> int:
+    nonempty_expert_bound = min(num_experts, total_routes)
+    return min(total_routes, triton.cdiv(total_routes, block_n) + nonempty_expert_bound)
+
+
+def _use_tight_grouped_grid() -> bool:
+    return os.environ.get("DSV2_BATCH_MOE_TIGHT_GRID", "1").lower() not in {"0", "false", "off"}
 
 
 def _parse_moe_tile_env(name: str) -> tuple[int, int, int] | None:

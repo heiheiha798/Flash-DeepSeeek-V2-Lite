@@ -551,3 +551,45 @@ at `bsz=256`, grouped gate/up is 38.8% and grouped down is 27.6%. `ncu` roofline
 collection is currently blocked by `ERR_NVGPUCTRPERM` for this user, so the
 memory-bound versus compute-bound split cannot be stated from hardware counters
 yet.
+
+## Batch MoE Tight Grid
+
+After the combined gate/up dot optimization, the next useful MoE cleanup was the
+grouped-kernel launch bound. The old launch used `total_routes` as the grid-x
+upper bound for both gate/up and down. At `bsz=256`, `topk=6`,
+`total_routes=1536`; with `BLOCK_N=32`, the actual route-block count is bounded
+by `ceil(total_routes / BLOCK_N) + nonempty_experts <= 112`. The remaining CTAs
+only load `block_count` and return.
+
+The implementation now uses this tighter upper bound by default while keeping
+`DSV2_BATCH_MOE_TIGHT_GRID=0` as an A/B fallback.
+
+Validated on A100 GPU3, `bsz=256`, fixed tile
+`DSV2_BATCH_MOE_GATE_TILE=32,64,128`,
+`DSV2_BATCH_MOE_DOWN_TILE=32,64,128`:
+
+| Kernel | Old grid | Tight grid | Old duration | Tight duration |
+| --- | ---: | ---: | ---: | ---: |
+| `_grouped_gate_up_swiglu_kernel` | 33,792 | 2,464 | 273.66 us | 254.91 us |
+| `_grouped_down_partial_kernel` | 49,152 | 3,584 | 177.31 us | 158.72 us |
+
+Reports:
+
+- `ncu-reps/batch_bsz256_grouped_gate_up_tight_grid_m64_decode.ncu-rep`
+- `ncu-reps/batch_bsz256_grouped_down_tight_grid_m64_decode.ncu-rep`
+- baseline combined gate/up:
+  `ncu-reps/batch_bsz256_grouped_gate_up_combined_m64_decode_source_0882f05.ncu-rep`
+- baseline down:
+  `ncu-reps/batch_bsz256_grouped_down_m64_decode_source_0882f05.ncu-rep`
+
+End-to-end fixed-tile comparison on A100 GPU3:
+
+| Mode | Decode TPS |
+| --- | ---: |
+| `DSV2_BATCH_MOE_TIGHT_GRID=0` | 9478.89 |
+| `DSV2_BATCH_MOE_TIGHT_GRID=1` | 9747.18 |
+| default env | 9731.97 |
+
+Conclusion: this is a low-risk structural optimization. It does not change the
+math or tile shape; it only avoids launching CTAs that are guaranteed to return
+immediately.
