@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -19,7 +20,9 @@ class PackedRoutedExperts:
     num_experts: int
     topk: int
 
-    autotune_cache: ClassVar[dict[tuple[int, int, int, torch.device], tuple[int, int, int]]] = {}
+    autotune_cache: ClassVar[
+        dict[tuple[int, int, int, torch.device, str, str], tuple[tuple[int, int, int], tuple[int, int, int]]]
+    ] = {}
 
     def to(self, *args, **kwargs) -> "PackedRoutedExperts":
         self.gate_up_weights = self.gate_up_weights.to(*args, **kwargs)
@@ -161,6 +164,7 @@ def _grouped_gate_up_swiglu_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    COMBINE_GATE_UP: tl.constexpr,
 ):
     block_idx = tl.program_id(0)
     row_block_idx = tl.program_id(1)
@@ -183,38 +187,72 @@ def _grouped_gate_up_swiglu_kernel(
     row_offsets = row_start + tl.arange(0, BLOCK_M)
     row_mask = row_offsets < intermediate_size
     k_offsets_base = tl.arange(0, BLOCK_K)
-    gate_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
-    up_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
+    if COMBINE_GATE_UP:
+        gate_up_offsets = tl.arange(0, 2 * BLOCK_M)
+        gate_up_row_offsets = row_start + (gate_up_offsets // 2)
+        gate_up_rows = tl.where(
+            (gate_up_offsets % 2) == 0,
+            gate_up_row_offsets,
+            intermediate_size + gate_up_row_offsets,
+        )
+        gate_up_row_mask = gate_up_row_offsets < intermediate_size
+        gate_up_acc = tl.zeros((BLOCK_N, 2 * BLOCK_M), dtype=tl.float32)
 
-    k_block = 0
-    while k_block * BLOCK_K < hidden_size:
-        k_start = k_block * BLOCK_K
-        k_offsets = k_start + k_offsets_base
-        k_mask = k_offsets < hidden_size
-        x_tile = tl.load(
-            x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
-            mask=route_mask[:, None] & k_mask[None, :],
-            other=0.0,
-        )
-        gate_w = tl.load(
-            gate_up_ptr
-            + expert_id * gate_up_stride_e
-            + k_offsets[:, None] * gate_up_stride_k
-            + row_offsets[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        )
-        up_w = tl.load(
-            gate_up_ptr
-            + expert_id * gate_up_stride_e
-            + k_offsets[:, None] * gate_up_stride_k
-            + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
-            mask=k_mask[:, None] & row_mask[None, :],
-            other=0.0,
-        )
-        gate_acc += tl.dot(x_tile, gate_w)
-        up_acc += tl.dot(x_tile, up_w)
-        k_block += 1
+        k_block = 0
+        while k_block * BLOCK_K < hidden_size:
+            k_start = k_block * BLOCK_K
+            k_offsets = k_start + k_offsets_base
+            k_mask = k_offsets < hidden_size
+            x_tile = tl.load(
+                x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
+                mask=route_mask[:, None] & k_mask[None, :],
+                other=0.0,
+            )
+            gate_up_w = tl.load(
+                gate_up_ptr
+                + expert_id * gate_up_stride_e
+                + k_offsets[:, None] * gate_up_stride_k
+                + gate_up_rows[None, :] * gate_up_stride_m,
+                mask=k_mask[:, None] & gate_up_row_mask[None, :],
+                other=0.0,
+            )
+            gate_up_acc += tl.dot(x_tile, gate_up_w)
+            k_block += 1
+
+        gate_acc, up_acc = tl.split(tl.reshape(gate_up_acc, (BLOCK_N, BLOCK_M, 2)))
+    else:
+        gate_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
+        up_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
+
+        k_block = 0
+        while k_block * BLOCK_K < hidden_size:
+            k_start = k_block * BLOCK_K
+            k_offsets = k_start + k_offsets_base
+            k_mask = k_offsets < hidden_size
+            x_tile = tl.load(
+                x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
+                mask=route_mask[:, None] & k_mask[None, :],
+                other=0.0,
+            )
+            gate_w = tl.load(
+                gate_up_ptr
+                + expert_id * gate_up_stride_e
+                + k_offsets[:, None] * gate_up_stride_k
+                + row_offsets[None, :] * gate_up_stride_m,
+                mask=k_mask[:, None] & row_mask[None, :],
+                other=0.0,
+            )
+            up_w = tl.load(
+                gate_up_ptr
+                + expert_id * gate_up_stride_e
+                + k_offsets[:, None] * gate_up_stride_k
+                + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
+                mask=k_mask[:, None] & row_mask[None, :],
+                other=0.0,
+            )
+            gate_acc += tl.dot(x_tile, gate_w)
+            up_acc += tl.dot(x_tile, up_w)
+            k_block += 1
 
     routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
     tl.store(
@@ -418,9 +456,8 @@ def _run_batched_grouped_routed_moe_grouped_triton(
     topk_weight: torch.Tensor,
     packed: PackedRoutedExperts,
     output_dtype: torch.dtype,
-    block_n: int,
-    block_m: int,
-    block_k: int,
+    gate_tile: tuple[int, int, int],
+    down_tile: tuple[int, int, int],
 ) -> torch.Tensor:
     batch_size = int(x.shape[0])
     topk = packed.topk
@@ -428,6 +465,8 @@ def _run_batched_grouped_routed_moe_grouped_triton(
     hidden_size = packed.hidden_size
     intermediate_size = packed.intermediate_size
     max_blocks = total_routes
+    gate_block_n, gate_block_m, gate_block_k = gate_tile
+    down_block_n, down_block_m, down_block_k = down_tile
 
     counts = torch.empty((packed.num_experts,), device=x.device, dtype=torch.int32)
     route_indices = torch.empty((packed.num_experts, total_routes), device=x.device, dtype=torch.int32)
@@ -437,6 +476,8 @@ def _run_batched_grouped_routed_moe_grouped_triton(
     routed_hidden = torch.empty((total_routes, intermediate_size), device=x.device, dtype=torch.bfloat16)
     partial = torch.empty((total_routes, hidden_size), device=x.device, dtype=torch.float32)
     out = torch.empty((batch_size, hidden_size), device=x.device, dtype=output_dtype)
+    gate_up_weights = packed.gate_up_weights
+    down_weights = packed.down_weights
 
     _zero_i32_kernel[(triton.cdiv(packed.num_experts + 1, 256),)](counts, packed.num_experts, BLOCK=256, num_warps=4)
     _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
@@ -455,12 +496,12 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         block_count,
         block_experts,
         block_offsets,
-        BLOCK_N=block_n,
+        BLOCK_N=gate_block_n,
         num_warps=1,
     )
-    _grouped_gate_up_swiglu_kernel[(max_blocks, triton.cdiv(intermediate_size, block_m))](
+    _grouped_gate_up_swiglu_kernel[(max_blocks, triton.cdiv(intermediate_size, gate_block_m))](
         x,
-        packed.gate_up_weights,
+        gate_up_weights,
         route_indices,
         counts,
         block_count,
@@ -473,19 +514,29 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         intermediate_size,
         x.stride(0),
         x.stride(1),
-        packed.gate_up_weights.stride(0),
-        packed.gate_up_weights.stride(1),
-        packed.gate_up_weights.stride(2),
+        gate_up_weights.stride(0),
+        gate_up_weights.stride(1),
+        gate_up_weights.stride(2),
         routed_hidden.stride(0),
         routed_hidden.stride(1),
-        BLOCK_N=block_n,
-        BLOCK_M=block_m,
-        BLOCK_K=block_k,
+        BLOCK_N=gate_block_n,
+        BLOCK_M=gate_block_m,
+        BLOCK_K=gate_block_k,
+        COMBINE_GATE_UP=_combine_gate_up_dot(),
         num_warps=4,
     )
-    _grouped_down_partial_kernel[(max_blocks, triton.cdiv(hidden_size, block_m))](
+    _zero_i32_kernel[(1,)](block_count, 1, BLOCK=1, num_warps=1)
+    _build_route_blocks_kernel[(packed.num_experts,)](
+        counts,
+        block_count,
+        block_experts,
+        block_offsets,
+        BLOCK_N=down_block_n,
+        num_warps=1,
+    )
+    _grouped_down_partial_kernel[(max_blocks, triton.cdiv(hidden_size, down_block_m))](
         routed_hidden,
-        packed.down_weights,
+        down_weights,
         route_indices,
         counts,
         block_count,
@@ -498,17 +549,17 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         intermediate_size,
         routed_hidden.stride(0),
         routed_hidden.stride(1),
-        packed.down_weights.stride(0),
-        packed.down_weights.stride(1),
-        packed.down_weights.stride(2),
+        down_weights.stride(0),
+        down_weights.stride(1),
+        down_weights.stride(2),
         partial.stride(0),
         partial.stride(1),
-        BLOCK_N=block_n,
-        BLOCK_M=block_m,
-        BLOCK_K=block_k,
+        BLOCK_N=down_block_n,
+        BLOCK_M=down_block_m,
+        BLOCK_K=down_block_k,
         num_warps=4,
     )
-    _batched_down_reduce_topk6_kernel[(batch_size, triton.cdiv(hidden_size, block_m))](
+    _batched_down_reduce_topk6_kernel[(batch_size, triton.cdiv(hidden_size, down_block_m))](
         partial,
         topk_weight,
         out,
@@ -520,7 +571,7 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         topk_weight.stride(1),
         out.stride(0),
         out.stride(1),
-        BLOCK_M=block_m,
+        BLOCK_M=down_block_m,
         OUT_DTYPE=tl.bfloat16 if output_dtype is torch.bfloat16 else tl.float32,
         num_warps=4,
     )
@@ -541,35 +592,61 @@ def _default_moe_grouped_tile(batch_size: int) -> tuple[int, int, int]:
     return 8, 32, 64
 
 
+def _parse_moe_tile_env(name: str) -> tuple[int, int, int] | None:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    parts = value.replace(",", " ").replace("x", " ").split()
+    if len(parts) != 3:
+        raise ValueError(f"{name} must contain three integers, got {value!r}")
+    tile = tuple(int(part) for part in parts)
+    if any(part <= 0 for part in tile):
+        raise ValueError(f"{name} must contain positive integers, got {value!r}")
+    return tile  # type: ignore[return-value]
+
+
+def _combine_gate_up_dot() -> bool:
+    return os.environ.get("DSV2_BATCH_MOE_GATE_UP_DOT", "combined").lower() not in {"split", "separate", "false", "0"}
+
+
 def _select_moe_grouped_tile(
     x: torch.Tensor,
     topk_ids: torch.Tensor,
     topk_weight: torch.Tensor,
     packed: PackedRoutedExperts,
     output_dtype: torch.dtype,
-) -> tuple[int, int, int]:
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     batch_size = int(x.shape[0])
-    key = (batch_size, packed.hidden_size, packed.intermediate_size, x.device)
+    gate_env = os.environ.get("DSV2_BATCH_MOE_GATE_TILE", "")
+    down_env = os.environ.get("DSV2_BATCH_MOE_DOWN_TILE", "")
+    key = (batch_size, packed.hidden_size, packed.intermediate_size, x.device, gate_env, down_env)
     cached = PackedRoutedExperts.autotune_cache.get(key)
     if cached is not None:
         return cached
+    default_tile = _default_moe_grouped_tile(batch_size)
+    forced_gate_tile = _parse_moe_tile_env("DSV2_BATCH_MOE_GATE_TILE")
+    forced_down_tile = _parse_moe_tile_env("DSV2_BATCH_MOE_DOWN_TILE")
+    if forced_gate_tile is not None or forced_down_tile is not None:
+        tile = (forced_gate_tile or default_tile, forced_down_tile or default_tile)
+        PackedRoutedExperts.autotune_cache[key] = tile
+        return tile
     if torch.cuda.is_current_stream_capturing():
-        tile = _default_moe_grouped_tile(batch_size)
+        tile = (default_tile, default_tile)
         PackedRoutedExperts.autotune_cache[key] = tile
         return tile
 
-    best_tile = _default_moe_grouped_tile(batch_size)
+    best_tile = default_tile
     best_ms = float("inf")
     for block_n, block_m, block_k in MOE_GROUPED_TILE_CANDIDATES:
+        candidate_tile = (block_n, block_m, block_k)
         _run_batched_grouped_routed_moe_grouped_triton(
             x,
             topk_ids,
             topk_weight,
             packed,
             output_dtype,
-            block_n,
-            block_m,
-            block_k,
+            candidate_tile,
+            candidate_tile,
         )
         torch.cuda.synchronize()
         start_event = torch.cuda.Event(enable_timing=True)
@@ -582,18 +659,18 @@ def _select_moe_grouped_tile(
                 topk_weight,
                 packed,
                 output_dtype,
-                block_n,
-                block_m,
-                block_k,
+                candidate_tile,
+                candidate_tile,
             )
         end_event.record()
         torch.cuda.synchronize()
         elapsed_ms = float(start_event.elapsed_time(end_event)) / 3.0
         if elapsed_ms < best_ms:
             best_ms = elapsed_ms
-            best_tile = (block_n, block_m, block_k)
-    PackedRoutedExperts.autotune_cache[key] = best_tile
-    return best_tile
+            best_tile = candidate_tile
+    selected = (best_tile, best_tile)
+    PackedRoutedExperts.autotune_cache[key] = selected
+    return selected
 
 
 def batched_grouped_routed_moe_grouped_triton(
@@ -608,16 +685,15 @@ def batched_grouped_routed_moe_grouped_triton(
     topk_weight = topk_weight.contiguous()
     if output_dtype is None:
         output_dtype = x.dtype
-    block_n, block_m, block_k = _select_moe_grouped_tile(x, topk_ids, topk_weight, packed, output_dtype)
+    gate_tile, down_tile = _select_moe_grouped_tile(
+        x, topk_ids, topk_weight, packed, output_dtype
+    )
     return _run_batched_grouped_routed_moe_grouped_triton(
         x,
         topk_ids,
         topk_weight,
         packed,
         output_dtype,
-        block_n,
-        block_m,
-        block_k,
+        gate_tile,
+        down_tile,
     )
-
-
