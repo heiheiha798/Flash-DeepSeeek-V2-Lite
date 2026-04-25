@@ -3,7 +3,7 @@ set -euo pipefail
 
 SGLANG_ENV=${SGLANG_ENV:-/data/home/tianjianyang/.conda/envs/dsv2lite-sglang-fa311}
 SGLANG_PYTHON=${SGLANG_PYTHON:-${SGLANG_ENV}/bin/python}
-MODEL_PATH=${MODEL_PATH:-/data/home/tianjianyang/models/DeepSeek-V2-Lite-Chat}
+MODEL_PATH=${MODEL_PATH:-/data/models/DeepSeek-V2-Lite-Chat}
 GPU=${GPU:-0}
 
 require_file() {

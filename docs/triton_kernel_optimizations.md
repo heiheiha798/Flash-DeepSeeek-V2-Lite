@@ -516,23 +516,24 @@ and applies shape-keyed tile autotuning over the same grouped kernels.
 
 This is an explicit batching tradeoff: batch scaling improves substantially, but
 `bsz=1` loses the old single-token-specialized fast path. The previous `bsz=1`
-reference was about 136 tok/s; the current unified path measures about 111 tok/s
-on RTX A6000 GPU2. Larger batches improve significantly, with the current 100-token
-sweep reaching 6051 tok/s at `bsz=256`.
+reference was about 136 tok/s; the current unified path measures about 145 tok/s
+on NVIDIA A100 80GB PCIe GPU3. Larger batches improve significantly, with the
+current 100-token sweep reaching 9396 tok/s at `bsz=256`.
 
-Validated on RTX A6000 GPU2 with input length 24 and `max_new_tokens=100`:
+Validated on NVIDIA A100 80GB PCIe GPU3 with input length 24 and
+`max_new_tokens=100`:
 
 | Batch | Path | Decode TPS | Log |
 | ---: | --- | ---: | --- |
-| 1 | `triton_decode_graph` | 111.02 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 2 | `triton_decode_graph` | 210.27 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 4 | `triton_decode_graph` | 414.69 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 8 | `triton_decode_graph` | 815.26 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 16 | `triton_decode_graph` | 1581.12 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 32 | `triton_decode_graph` | 2785.18 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 64 | `triton_decode_graph` | 4425.15 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 128 | `triton_decode_graph` | 5521.96 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
-| 256 | `triton_decode_graph` | 6051.28 | `/tmp/dsv2lite_current_autotune_sweep_20260425_145515/src_sota_sweep.log` |
+| 1 | `triton_decode_graph` | 144.78 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 2 | `triton_decode_graph` | 266.97 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 4 | `triton_decode_graph` | 514.33 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 8 | `triton_decode_graph` | 951.82 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 16 | `triton_decode_graph` | 1920.58 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 32 | `triton_decode_graph` | 3624.22 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 64 | `triton_decode_graph` | 5746.40 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 128 | `triton_decode_graph` | 7902.84 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
+| 256 | `triton_decode_graph` | 9395.99 | `/tmp/dsv2lite_a100_rerun_20260425_162309/src_sota_sweep.log` |
 
 Node-level `nsys` reports for the current path:
 

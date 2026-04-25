@@ -8,48 +8,48 @@ from pathlib import Path
 BATCHES = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 SERIES = {
     "src/sota": {
-        1: 111.02,
-        2: 210.27,
-        4: 414.69,
-        8: 815.26,
-        16: 1581.12,
-        32: 2785.18,
-        64: 4425.15,
-        128: 5521.96,
-        256: 6051.28,
+        1: 144.78,
+        2: 266.97,
+        4: 514.33,
+        8: 951.82,
+        16: 1920.58,
+        32: 3624.22,
+        64: 5746.40,
+        128: 7902.84,
+        256: 9395.99,
     },
     "SGLang": {
-        1: 110.26,
-        2: 154.86,
-        4: 213.02,
-        8: 311.40,
-        16: 482.08,
-        32: 819.97,
-        64: 1359.07,
-        128: 1884.23,
-        256: 3387.60,
+        1: 165.16,
+        2: 256.48,
+        4: 379.13,
+        8: 599.85,
+        16: 953.28,
+        32: 1585.99,
+        64: 2833.83,
+        128: 3945.98,
+        256: 7094.12,
     },
     "vLLM": {
-        1: 67.13,
-        2: 124.02,
-        4: 208.98,
-        8: 301.30,
-        16: 461.50,
-        32: 760.38,
-        64: 1291.24,
-        128: 1740.49,
-        256: 2944.65,
+        1: 78.44,
+        2: 185.52,
+        4: 390.01,
+        8: 585.65,
+        16: 930.27,
+        32: 1549.51,
+        64: 2638.93,
+        128: 3655.33,
+        256: 6113.90,
     },
     "llama.cpp": {
-        1: 99.92,
-        2: 155.50,
-        4: 233.66,
-        8: 359.21,
-        16: 518.28,
-        32: 772.79,
-        64: 1081.21,
-        128: 1363.71,
-        256: 1563.54,
+        1: 137.01,
+        2: 226.56,
+        4: 367.57,
+        8: 593.93,
+        16: 849.41,
+        32: 1285.17,
+        64: 1838.71,
+        128: 2389.42,
+        256: 2051.89,
     },
 }
 COLORS = {
@@ -81,8 +81,8 @@ def x_pos(batch: int) -> float:
 
 
 Y_MIN = 64.0
-Y_MAX = 8192.0
-Y_TICKS = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
+Y_MAX = 16384.0
+Y_TICKS = [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 
 
 def y_pos(tps: float) -> float:
@@ -114,7 +114,7 @@ def build_svg() -> str:
     elements: list[str] = []
     elements.append(f'<rect width="{WIDTH}" height="{HEIGHT}" fill="white" />')
     elements.append(text(WIDTH / 2, 32, "Batch Scaling", text_anchor="middle", font_size="24", font_weight="700"))
-    elements.append(text(WIDTH / 2, 56, "DeepSeek-V2-Lite-Chat, RTX A6000 GPU2, input 24 tokens, output/decode 100 tokens", text_anchor="middle", font_size="14", fill="#555"))
+    elements.append(text(WIDTH / 2, 56, "DeepSeek-V2-Lite-Chat, NVIDIA A100 80GB PCIe GPU3, input 24 tokens, output/decode 100 tokens", text_anchor="middle", font_size="14", fill="#555"))
 
     for batch in BATCHES:
         x = x_pos(batch)

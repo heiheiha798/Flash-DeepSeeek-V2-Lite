@@ -8,7 +8,7 @@ commands used to compare against the DeepSeek-V2-Lite Triton path.
 - llama.cpp source: `/data/home/tianjianyang/code/llama.cpp`
 - conda env: `/data/home/tianjianyang/.conda/envs/dsv2lite-llamacpp`
 - CUDA build: `/data/home/tianjianyang/code/llama.cpp/build-cuda-a100`
-- default model: `/data/home/tianjianyang/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf`
+- default model: `/data/models/gguf-models/DeepSeek-V2-Lite-Chat-F16.gguf`
 
 The similarly named `/data/models/gguf_models/DeepSeek-V2-Lite-Chat-F16.gguf`
 was not used because it is a zero-byte file without read permission for this
@@ -65,11 +65,12 @@ Default benchmark shape:
 - llama.cpp FlashAttention: `on`
 - eval batch / micro-batch: `BATCH_SIZE=2048`, `UBATCH_SIZE=512` in the single-run script
 
-Latest observed GPU0 result from `bench_dsv2_lite.sh`:
+Latest observed A100 GPU3 `llama-batched-bench -npl` batch-size sweep result:
 
 ```text
-pp24:  1045.36 +/- 27.80 tok/s
-tg100: 115.90 +/- 0.05 tok/s
+bsz=1 tg100:   137.01 tok/s
+bsz=256 tg100: 2051.89 tok/s
+log: /tmp/dsv2lite_a100_rerun_20260425_162309/llama_cpp/llama_batched_bench_npl_1_2_4_8_16_32_64_128_256.jsonl
 hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: llama.cpp CUDA build with CUDA graphs and GGML CUDA FlashAttention
 ```

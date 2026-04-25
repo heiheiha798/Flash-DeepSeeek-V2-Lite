@@ -55,12 +55,12 @@ Run the SOTA reporting sweep over common batch sizes:
 ```bash
 CUDA_VISIBLE_DEVICES=0 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
   src/sota.py --device cuda:0 --max-new-tokens 100 \
-  --batch-sizes "1 2 4 8 16 32 64 128 256 512"
+  --batch-sizes "1 2 4 8 16 32 64 128 256"
 ```
 
-Interpretation: `batch_size=1` reports the optimized Triton graph path;
-`batch_size>1` reports a batched eager fallback because the current routed MoE
-and attention Triton kernels are single-token, single-batch specializations.
+Interpretation: all listed batch sizes use the unified q_len=1
+`triton_decode_graph` path. Third-party serving baselines and the committed plot
+are capped at batch size 256 for comparable measurements.
 
 For performance runs, check `nvidia-smi` first and do not run two GPU workloads
 on the same card. GPU3 has been the preferred card for final numbers, but GPU0

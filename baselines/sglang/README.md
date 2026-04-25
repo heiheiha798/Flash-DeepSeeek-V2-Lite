@@ -66,12 +66,13 @@ Default benchmark shape:
 - dtype: `bfloat16`
 - CUDA graph batch sizes: `BATCH_SIZE` in the sweep, `1` in the single-batch default
 
-Latest observed RTX A6000 GPU2 decode result:
+Latest observed A100 GPU3 decode result:
 
 ```text
-median decode latency: 0.00907 s
-decode TPS: 110.21 tok/s
-hardware: NVIDIA RTX A6000, sm86, 48 GB; Intel(R) Xeon(R) Gold 5220R, 48C/48T, 376.55 GiB RAM
+median decode latency: 0.00605 s
+decode TPS: 165.16 tok/s
+log: /tmp/dsv2lite_a100_rerun_20260425_162309/sglang/bs1.jsonl
+hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: torch 2.9.1+cu130, triton 3.5.1, sglang 0.5.9, flash_attn 2.8.3
 ```
 
@@ -81,4 +82,4 @@ overrides.
 
 ## Current Caveat
 
-On RTX A6000, SGLang reports missing fused MoE tuning configs for `E=64,N=1408,device_name=NVIDIA_RTX_A6000*.json`. The result is valid for the official default path, but tuned MoE configs may improve it.
+On A100, SGLang reports missing fused MoE tuning configs for `E=64,N=1408,device_name=NVIDIA_A100_80GB_PCIe*.json`. The result is valid for the official default path, but tuned MoE configs may improve it.

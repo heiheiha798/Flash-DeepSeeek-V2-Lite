@@ -71,21 +71,20 @@ CUDAGraphMode.FULL_AND_PIECEWISE is not supported with TritonMLABackend
 setting cudagraph_mode=PIECEWISE
 ```
 
-Latest observed GPU0 decode result:
+Latest observed A100 GPU3 latency result:
 
 ```text
-output_len=100 avg latency: 1.017024 s
-output_len=1 avg latency:   0.044115 s
-decode TPS estimate:        101.76 tok/s
+batch_size=1 output_len=100 avg latency: 1.274782 s
+batch_size=1 output TPS:                 78.44 tok/s
+log: /tmp/dsv2lite_a100_rerun_20260425_162309/vllm/bs1.log
 hardware: NVIDIA A100 80GB PCIe, sm80, 80 GB; INTEL(R) XEON(R) PLATINUM 8558P, 96C/192T, 503.53 GiB RAM
 software: vllm 0.16.0, torch 2.9.1+cu130, triton 3.5.1, flashinfer-python 0.6.3
 ```
 
-Decode TPS is estimated by subtracting the `output_len=1` latency from the
-`output_len=100` latency:
+Output TPS is estimated from `batch_size * output_len / Avg latency`:
 
 ```text
-99 / (1.017024 - 0.044115) = 101.76 tok/s
+1 * 100 / 1.274782 = 78.44 tok/s
 ```
 
 The script prints `nvidia-smi` first and refuses to run if the selected GPU has
