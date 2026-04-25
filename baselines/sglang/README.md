@@ -51,7 +51,7 @@ GPU=0 baselines/sglang/bench_dsv2_lite_batch_sweep.sh
 Default sweep batch sizes:
 
 ```text
-1 2 4 8 16 32 64 128 256 512
+1 2 4 8 16 32 64 128 256
 ```
 
 Override with `BATCH_SIZES`, for example `BATCH_SIZES="1 8 64"`. Sweep logs

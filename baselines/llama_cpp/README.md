@@ -37,7 +37,7 @@ Run the fixed decode benchmark on GPU0:
 GPU=0 baselines/llama_cpp/bench_dsv2_lite.sh
 ```
 
-Run the fixed `llama-bench` batch-parameter sweep:
+Run the fixed real-parallel `llama-batched-bench -npl` sweep:
 
 ```bash
 GPU=0 baselines/llama_cpp/bench_dsv2_lite_batch_sweep.sh
@@ -46,12 +46,13 @@ GPU=0 baselines/llama_cpp/bench_dsv2_lite_batch_sweep.sh
 Default sweep values:
 
 ```text
-1 2 4 8 16 32 64 128 256 512
+1 2 4 8 16 32 64 128 256
 ```
 
-For llama.cpp, this sweep maps to `llama-bench -b` and defaults `-ub` to the
-same value. This is not the same concept as SGLang/vLLM concurrent request
-batch size; it is llama.cpp's internal eval batch / micro-batch parameter.
+This sweep uses `llama-batched-bench -npl`, so `BATCH_SIZES` maps to real
+parallel sequences. The 512-point is excluded in this setup because the current
+llama.cpp build rejects `npl=512` with `n_seq_max must be <= 256`. Do not fall
+back to `llama-bench -b/-ub`, which is not concurrent-request batch size.
 Override with `BATCH_SIZES`, for example `BATCH_SIZES="1 8 64"`. Sweep logs are
 written under `RESULT_DIR`, defaulting to `/tmp/llama_cpp_dsv2lite_batch_sweep`.
 

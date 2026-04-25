@@ -46,11 +46,12 @@ GPU=0 baselines/vllm/bench_dsv2_lite_batch_sweep.sh
 Default sweep batch sizes:
 
 ```text
-1 2 4 8 16 32 64 128 256 512
+1 2 4 8 16 32 64 128 256
 ```
 
 Override with `BATCH_SIZES`, for example `BATCH_SIZES="1 8 64"`. Sweep logs
 are written under `RESULT_DIR`, defaulting to `/tmp/vllm_dsv2lite_batch_sweep`.
+The 512-request run is excluded in this setup because vLLM scheduled it as two 256-request waves rather than one true `bsz=512` batch.
 
 Default benchmark shape:
 

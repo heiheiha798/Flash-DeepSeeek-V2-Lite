@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/common.sh"
 
-BATCH_SIZES=${BATCH_SIZES:-"1 2 4 8 16 32 64 128 256 512"}
+BATCH_SIZES=${BATCH_SIZES:-"1 2 4 8 16 32 64 128 256"}
 RESULT_DIR=${RESULT_DIR:-/tmp/sglang_dsv2lite_batch_sweep}
 
 normalize_batch_sizes() {
