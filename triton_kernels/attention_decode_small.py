@@ -615,25 +615,30 @@ def attention_decode_only_triton(
         num_warps=4,
     )
 
-    _cache_write_q1_dual_kernel[(DSV2L_NUM_HEADS, triton.cdiv(max(DSV2L_Q_DIM, DSV2L_V_DIM), 64))](
+    _cache_write_q1_dual_kernel[(1, DSV2L_NUM_HEADS, triton.cdiv(max(DSV2L_Q_DIM, DSV2L_V_DIM), 64))](
         workspace.k_new,
         workspace.v_new,
-        key_cache[0],
-        value_cache[0],
+        key_cache,
+        value_cache,
         cache_position_1d,
-        DSV2L_NUM_HEADS,
         DSV2L_Q_DIM,
         DSV2L_V_DIM,
+        0,
         workspace.k_new.stride(0),
+        0,
         workspace.k_new.stride(1),
+        0,
         workspace.v_new.stride(0),
+        0,
         workspace.v_new.stride(1),
-        key_cache[0].stride(0),
-        key_cache[0].stride(1),
-        key_cache[0].stride(2),
-        value_cache[0].stride(0),
-        value_cache[0].stride(1),
-        value_cache[0].stride(2),
+        key_cache.stride(0),
+        key_cache.stride(1),
+        key_cache.stride(2),
+        key_cache.stride(3),
+        value_cache.stride(0),
+        value_cache.stride(1),
+        value_cache.stride(2),
+        value_cache.stride(3),
         BLOCK_D=64,
         num_warps=4,
     )
@@ -850,11 +855,10 @@ class BatchedAttentionDecodeWorkspace:
 
 
 @triton.jit
-def _batched_linear_kernel(
+def _small_batch_gemv_kernel(
     x_ptr,
     w_ptr,
     out_ptr,
-    batch_size,
     out_rows,
     in_cols,
     x_stride_b,
@@ -863,47 +867,207 @@ def _batched_linear_kernel(
     w_stride_k,
     out_stride_b,
     out_stride_o,
-    BLOCK_B: tl.constexpr,
-    BLOCK_O: tl.constexpr,
-    BLOCK_K: tl.constexpr,
+    BLOCK_ROW: tl.constexpr,
+    BLOCK_COL: tl.constexpr,
+    EXACT_ROWS: tl.constexpr,
 ):
-    batch_block = tl.program_id(0)
-    out_block = tl.program_id(1)
-    batch_offsets = batch_block * BLOCK_B + tl.arange(0, BLOCK_B)
-    out_offsets = out_block * BLOCK_O + tl.arange(0, BLOCK_O)
-    batch_mask = batch_offsets < batch_size
-    out_mask = out_offsets < out_rows
+    batch_idx = tl.program_id(0)
+    row_block = tl.program_id(1)
+    row_offsets = row_block * BLOCK_ROW + tl.arange(0, BLOCK_ROW)
+    row_mask = row_offsets < out_rows
 
-    acc = tl.zeros((BLOCK_B, BLOCK_O), dtype=tl.float32)
-    k_offsets_base = tl.arange(0, BLOCK_K)
-    k_start = 0
-    while k_start < in_cols:
-        k_offsets = k_start + k_offsets_base
-        k_mask = k_offsets < in_cols
+    acc = tl.zeros((BLOCK_ROW,), dtype=tl.float32)
+    col_offsets_base = tl.arange(0, BLOCK_COL)
+    col_start = 0
+    while col_start < in_cols:
+        col_offsets = col_start + col_offsets_base
+        col_mask = col_offsets < in_cols
         x = tl.load(
-            x_ptr + batch_offsets[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
-            mask=batch_mask[:, None] & k_mask[None, :],
+            x_ptr + batch_idx * x_stride_b + col_offsets * x_stride_k,
+            mask=col_mask,
             other=0.0,
         ).to(tl.float32)
-        w = tl.load(
-            w_ptr + out_offsets[:, None] * w_stride_o + k_offsets[None, :] * w_stride_k,
-            mask=out_mask[:, None] & k_mask[None, :],
-            other=0.0,
-        ).to(tl.float32)
-        acc += tl.dot(x, tl.trans(w))
-        k_start += BLOCK_K
+        w_ptrs = w_ptr + row_offsets[:, None] * w_stride_o + col_offsets[None, :] * w_stride_k
+        if EXACT_ROWS:
+            w = tl.load(w_ptrs, mask=col_mask[None, :], other=0.0).to(tl.float32)
+        else:
+            w = tl.load(w_ptrs, mask=row_mask[:, None] & col_mask[None, :], other=0.0).to(tl.float32)
+        acc += tl.reshape(tl.dot(w, x[:, None]), (BLOCK_ROW,))
+        col_start += BLOCK_COL
 
-    tl.store(
-        out_ptr + batch_offsets[:, None] * out_stride_b + out_offsets[None, :] * out_stride_o,
-        acc.to(tl.bfloat16),
-        mask=batch_mask[:, None] & out_mask[None, :],
+    if EXACT_ROWS:
+        tl.store(out_ptr + batch_idx * out_stride_b + row_offsets * out_stride_o, acc.to(tl.bfloat16))
+    else:
+        tl.store(out_ptr + batch_idx * out_stride_b + row_offsets * out_stride_o, acc.to(tl.bfloat16), mask=row_mask)
+
+
+def _run_small_batch_gemv(
+    x: torch.Tensor,
+    w: torch.Tensor,
+    out: torch.Tensor,
+    out_rows: int,
+    in_cols: int,
+    exact_rows: bool,
+) -> None:
+    _small_batch_gemv_kernel[(int(x.shape[0]), triton.cdiv(out_rows, 64))](
+        x,
+        w,
+        out,
+        out_rows,
+        in_cols,
+        x.stride(0),
+        x.stride(1),
+        w.stride(0),
+        w.stride(1),
+        out.stride(0),
+        out.stride(1),
+        BLOCK_ROW=64,
+        BLOCK_COL=256,
+        EXACT_ROWS=exact_rows,
+        num_warps=4,
+        num_stages=4,
     )
 
 
-def _select_batched_linear_tile(batch_size: int) -> tuple[int, int, int]:
-    if batch_size == 1:
-        return 1, 64, 256
-    return 8, 64, 128
+def attention_decode_small_batch_triton(
+    hidden_states: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    cache_position: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    packed: AttentionPackedWeights,
+    softmax_scale: float,
+) -> torch.Tensor:
+    if hidden_states.device.type != "cuda":
+        raise NotImplementedError("attention_decode_small_batch_triton requires CUDA tensors")
+    if hidden_states.dtype != torch.bfloat16:
+        raise NotImplementedError("attention_decode_small_batch_triton supports bf16 only")
+    if hidden_states.ndim != 3 or hidden_states.shape[1] != 1 or hidden_states.shape[2] != DSV2L_HIDDEN:
+        raise ValueError("hidden_states shape must be [B,1,2048]")
+    if position_ids.ndim != 2 or position_ids.shape[1] != 1 or position_ids.dtype != torch.long:
+        raise ValueError("position_ids must be CUDA int64 tensor with shape [B,1]")
+    if cache_position.numel() != 1 or cache_position.dtype != torch.long:
+        raise ValueError("cache_position must be CUDA int64 tensor with one element")
+
+    batch_size = int(hidden_states.shape[0])
+    x = hidden_states.view(batch_size, DSV2L_HIDDEN)
+    workspace = _get_batched_workspace(packed, x.device, batch_size)
+
+    _run_small_batch_gemv(
+        x=x,
+        w=packed.q_kv_a_weight,
+        out=workspace.q_kv_a_out,
+        out_rows=DSV2L_Q_ROWS + DSV2L_KV_A_ROWS,
+        in_cols=DSV2L_HIDDEN,
+        exact_rows=True,
+    )
+
+    kv_lora_norm = rmsnorm_triton(
+        workspace.kv_lora.view(batch_size, 1, DSV2L_KV_LORA_RANK),
+        packed.kv_a_ln_weight,
+        packed.kv_a_ln_eps,
+    ).view(batch_size, DSV2L_KV_LORA_RANK)
+    workspace.kv_lora_norm.copy_(kv_lora_norm)
+
+    _run_small_batch_gemv(
+        x=workspace.kv_lora_norm,
+        w=packed.kv_b_weight,
+        out=workspace.kvb_proj,
+        out_rows=DSV2L_KVB_ROWS,
+        in_cols=DSV2L_KV_LORA_RANK,
+        exact_rows=True,
+    )
+
+    _batched_build_qkv_rope_kernel[(batch_size, DSV2L_NUM_HEADS, triton.cdiv(DSV2L_Q_DIM, 64))](
+        workspace.q_kv_a_out,
+        workspace.kvb_proj,
+        cos,
+        sin,
+        cache_position.view(-1),
+        workspace.q_out,
+        workspace.k_new,
+        workspace.v_new,
+        batch_size,
+        workspace.q_kv_a_out.stride(0),
+        workspace.q_kv_a_out.stride(1),
+        workspace.kvb_proj.stride(0),
+        workspace.kvb_proj.stride(1),
+        cos.stride(0),
+        cos.stride(1),
+        sin.stride(0),
+        sin.stride(1),
+        workspace.q_out.stride(0),
+        workspace.q_out.stride(1),
+        workspace.q_out.stride(2),
+        workspace.q_out.stride(3),
+        workspace.k_new.stride(0),
+        workspace.k_new.stride(1),
+        workspace.k_new.stride(2),
+        workspace.k_new.stride(3),
+        workspace.v_new.stride(0),
+        workspace.v_new.stride(1),
+        workspace.v_new.stride(2),
+        workspace.v_new.stride(3),
+        Q_ROWS=DSV2L_Q_ROWS,
+        Q_DIM=DSV2L_Q_DIM,
+        QK_NOPE_DIM=DSV2L_QK_NOPE_DIM,
+        QK_ROPE_DIM=DSV2L_QK_ROPE_DIM,
+        KV_LORA_RANK=DSV2L_KV_LORA_RANK,
+        V_DIM=DSV2L_V_DIM,
+        BLOCK_D=64,
+        num_warps=4,
+    )
+
+    _cache_write_q1_dual_kernel[(batch_size, DSV2L_NUM_HEADS, triton.cdiv(max(DSV2L_Q_DIM, DSV2L_V_DIM), 64))](
+        workspace.k_new,
+        workspace.v_new,
+        key_cache,
+        value_cache,
+        cache_position.view(-1),
+        DSV2L_Q_DIM,
+        DSV2L_V_DIM,
+        workspace.k_new.stride(0),
+        workspace.k_new.stride(1),
+        workspace.k_new.stride(2),
+        workspace.k_new.stride(3),
+        workspace.v_new.stride(0),
+        workspace.v_new.stride(1),
+        workspace.v_new.stride(2),
+        workspace.v_new.stride(3),
+        key_cache.stride(0),
+        key_cache.stride(1),
+        key_cache.stride(2),
+        key_cache.stride(3),
+        value_cache.stride(0),
+        value_cache.stride(1),
+        value_cache.stride(2),
+        value_cache.stride(3),
+        BLOCK_D=64,
+        num_warps=4,
+    )
+
+    workspace.attn_ctx.copy_(
+        batched_attention_decode_q1_triton(
+            workspace.q_out,
+            key_cache,
+            value_cache,
+            cache_position,
+            softmax_scale,
+        )
+    )
+    attn_ctx_flat = workspace.attn_ctx.view(batch_size, DSV2L_NUM_HEADS * DSV2L_V_DIM)
+    o_out_flat = workspace.o_out.view(batch_size, DSV2L_HIDDEN)
+    _run_small_batch_gemv(
+        x=attn_ctx_flat,
+        w=packed.o_weight,
+        out=o_out_flat,
+        out_rows=DSV2L_HIDDEN,
+        in_cols=DSV2L_HIDDEN,
+        exact_rows=True,
+    )
+    return workspace.o_out
 
 
 @triton.jit
@@ -1083,178 +1247,3 @@ def _get_batched_workspace(
     return workspace
 
 
-def attention_decode_triton(
-    hidden_states: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    position_ids: torch.Tensor,
-    cache_position: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    packed: AttentionPackedWeights,
-    softmax_scale: float,
-) -> torch.Tensor:
-    if hidden_states.device.type != "cuda":
-        raise NotImplementedError("attention_decode_triton requires CUDA tensors")
-    if hidden_states.dtype != torch.bfloat16:
-        raise NotImplementedError("attention_decode_triton supports bf16 only")
-    if hidden_states.ndim != 3 or hidden_states.shape[1] != 1 or hidden_states.shape[2] != DSV2L_HIDDEN:
-        raise ValueError("hidden_states shape must be [B,1,2048]")
-    if position_ids.ndim != 2 or position_ids.shape[1] != 1 or position_ids.dtype != torch.long:
-        raise ValueError("position_ids must be CUDA int64 tensor with shape [B,1]")
-    if cache_position.numel() != 1 or cache_position.dtype != torch.long:
-        raise ValueError("cache_position must be CUDA int64 tensor with one element")
-
-    batch_size = int(hidden_states.shape[0])
-    x = hidden_states.view(batch_size, DSV2L_HIDDEN)
-    workspace = _get_batched_workspace(packed, x.device, batch_size)
-
-    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
-    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_Q_ROWS + DSV2L_KV_A_ROWS, block_o))](
-        x,
-        packed.q_kv_a_weight,
-        workspace.q_kv_a_out,
-        batch_size,
-        DSV2L_Q_ROWS + DSV2L_KV_A_ROWS,
-        DSV2L_HIDDEN,
-        x.stride(0),
-        x.stride(1),
-        packed.q_kv_a_weight.stride(0),
-        packed.q_kv_a_weight.stride(1),
-        workspace.q_kv_a_out.stride(0),
-        workspace.q_kv_a_out.stride(1),
-        BLOCK_B=block_b,
-        BLOCK_O=block_o,
-        BLOCK_K=block_k,
-        num_warps=4,
-        num_stages=4,
-    )
-
-    kv_lora_norm = rmsnorm_triton(
-        workspace.kv_lora.view(batch_size, 1, DSV2L_KV_LORA_RANK),
-        packed.kv_a_ln_weight,
-        packed.kv_a_ln_eps,
-    ).view(batch_size, DSV2L_KV_LORA_RANK)
-    workspace.kv_lora_norm.copy_(kv_lora_norm)
-
-    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
-    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_KVB_ROWS, block_o))](
-        workspace.kv_lora_norm,
-        packed.kv_b_weight,
-        workspace.kvb_proj,
-        batch_size,
-        DSV2L_KVB_ROWS,
-        DSV2L_KV_LORA_RANK,
-        workspace.kv_lora_norm.stride(0),
-        workspace.kv_lora_norm.stride(1),
-        packed.kv_b_weight.stride(0),
-        packed.kv_b_weight.stride(1),
-        workspace.kvb_proj.stride(0),
-        workspace.kvb_proj.stride(1),
-        BLOCK_B=block_b,
-        BLOCK_O=block_o,
-        BLOCK_K=block_k,
-        num_warps=4,
-        num_stages=4,
-    )
-
-    _batched_build_qkv_rope_kernel[(batch_size, DSV2L_NUM_HEADS, triton.cdiv(DSV2L_Q_DIM, 64))](
-        workspace.q_kv_a_out,
-        workspace.kvb_proj,
-        cos,
-        sin,
-        cache_position.view(-1),
-        workspace.q_out,
-        workspace.k_new,
-        workspace.v_new,
-        batch_size,
-        workspace.q_kv_a_out.stride(0),
-        workspace.q_kv_a_out.stride(1),
-        workspace.kvb_proj.stride(0),
-        workspace.kvb_proj.stride(1),
-        cos.stride(0),
-        cos.stride(1),
-        sin.stride(0),
-        sin.stride(1),
-        workspace.q_out.stride(0),
-        workspace.q_out.stride(1),
-        workspace.q_out.stride(2),
-        workspace.q_out.stride(3),
-        workspace.k_new.stride(0),
-        workspace.k_new.stride(1),
-        workspace.k_new.stride(2),
-        workspace.k_new.stride(3),
-        workspace.v_new.stride(0),
-        workspace.v_new.stride(1),
-        workspace.v_new.stride(2),
-        workspace.v_new.stride(3),
-        Q_ROWS=DSV2L_Q_ROWS,
-        Q_DIM=DSV2L_Q_DIM,
-        QK_NOPE_DIM=DSV2L_QK_NOPE_DIM,
-        QK_ROPE_DIM=DSV2L_QK_ROPE_DIM,
-        KV_LORA_RANK=DSV2L_KV_LORA_RANK,
-        V_DIM=DSV2L_V_DIM,
-        BLOCK_D=64,
-        num_warps=4,
-    )
-
-    _cache_write_q1_dual_kernel[(batch_size, DSV2L_NUM_HEADS, triton.cdiv(max(DSV2L_Q_DIM, DSV2L_V_DIM), 64))](
-        workspace.k_new,
-        workspace.v_new,
-        key_cache,
-        value_cache,
-        cache_position.view(-1),
-        DSV2L_Q_DIM,
-        DSV2L_V_DIM,
-        workspace.k_new.stride(0),
-        workspace.k_new.stride(1),
-        workspace.k_new.stride(2),
-        workspace.k_new.stride(3),
-        workspace.v_new.stride(0),
-        workspace.v_new.stride(1),
-        workspace.v_new.stride(2),
-        workspace.v_new.stride(3),
-        key_cache.stride(0),
-        key_cache.stride(1),
-        key_cache.stride(2),
-        key_cache.stride(3),
-        value_cache.stride(0),
-        value_cache.stride(1),
-        value_cache.stride(2),
-        value_cache.stride(3),
-        BLOCK_D=64,
-        num_warps=4,
-    )
-
-    workspace.attn_ctx.copy_(
-        batched_attention_decode_q1_triton(
-            workspace.q_out,
-            key_cache,
-            value_cache,
-            cache_position,
-            softmax_scale,
-        )
-    )
-    attn_ctx_flat = workspace.attn_ctx.view(batch_size, DSV2L_NUM_HEADS * DSV2L_V_DIM)
-    o_out_flat = workspace.o_out.view(batch_size, DSV2L_HIDDEN)
-    block_b, block_o, block_k = _select_batched_linear_tile(batch_size)
-    _batched_linear_kernel[(triton.cdiv(batch_size, block_b), triton.cdiv(DSV2L_HIDDEN, block_o))](
-        attn_ctx_flat,
-        packed.o_weight,
-        o_out_flat,
-        batch_size,
-        DSV2L_HIDDEN,
-        DSV2L_HIDDEN,
-        attn_ctx_flat.stride(0),
-        attn_ctx_flat.stride(1),
-        packed.o_weight.stride(0),
-        packed.o_weight.stride(1),
-        o_out_flat.stride(0),
-        o_out_flat.stride(1),
-        BLOCK_B=block_b,
-        BLOCK_O=block_o,
-        BLOCK_K=block_k,
-        num_warps=4,
-        num_stages=4,
-    )
-    return workspace.o_out

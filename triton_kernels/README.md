@@ -1,12 +1,12 @@
 # Triton Kernels
 
 This directory contains the active DeepSeek-V2-Lite decode kernels used by
-`src/sota.py`.
+`src/run.py --kernel-family small|batch`.
 
 Target assumptions:
 
 - model: `DeepSeek-V2-Lite-Chat`
-- GPU: RTX A6000 / SM86 for current batch sweeps; kernels are Triton bf16 decode kernels.
+- GPU: NVIDIA A100 80GB / SM80 for current batch sweeps; kernels are Triton bf16 decode kernels.
 - dtype: bf16
 - decode: q_len=1 with shared batched paths for batch sizes 1 through 256
 - graph-safe execution where possible
@@ -15,10 +15,12 @@ Target assumptions:
 
 - `rmsnorm.py`: Triton RMSNorm for hidden size 2048 and kv-lora rank 512 paths.
 - `moe_router.py`: router softmax + fixed topk6.
-- `moe_grouped_gemv.py`: shared batched routed-MoE grouped gate/up/down/reduce path with shape-keyed tile autotuning.
+- `moe_batch.py`: grouped batched routed-MoE gate/up/down/reduce path with shape-keyed tile autotuning.
+- `moe_small_gemv.py`: batched API implemented with the bsz=1-style route-local GEMV template.
 - `mlp_elementwise.py`: MLP `silu(gate) * up` elementwise fusion.
 - `attention_prepost.py`: decode input preparation, cache write, residual add.
-- `attention_decode.py`: DeepSeek-V2-Lite shared batched attention decode path and packed linear helpers.
+- `attention_decode_batch.py`: DeepSeek-V2-Lite grouped batching attention decode path and packed linear helpers.
+- `attention_decode_small.py`: DeepSeek-V2-Lite small-GEMV attention decode path.
 
 ## Tooling
 
@@ -33,9 +35,12 @@ only if single-kernel metrics or end-to-end graph metrics justify it.
 
 ## Current Batch Tradeoff
 
-The current `src/sota.py` path intentionally routes `bsz=1` and `bsz>1` through
-the same decode-attention and grouped-MoE implementation. This removes the old
-API-level batch-size split and improves scaling at larger batch sizes, but it
-reduces batch=1 throughput versus the previous single-token-specialized path.
-Current measured `bsz=1` is about 111 tok/s, versus about 136 tok/s before the
-unified batched path.
+The current runner intentionally exposes two kernel families:
+
+- `--kernel-family small`: batched API with a small-GEMV implementation template.
+- `--kernel-family batch`: grouped batching kernels that reuse weights across
+  batch and expert routes.
+
+These are selected by an explicit runtime argument so full-batch sweeps compare
+implementation methods directly rather than hiding the tradeoff behind an
+auto-selected path.

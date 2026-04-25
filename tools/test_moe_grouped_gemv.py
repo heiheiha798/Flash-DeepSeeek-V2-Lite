@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from triton_kernels.moe_grouped_gemv import batched_grouped_routed_moe, grouped_routed_moe, pack_routed_experts
+from triton_kernels.moe_batch import batched_grouped_routed_moe, pack_routed_experts
 
 
 MODEL_PATH = Path(os.environ.get("MODEL_PATH", "/data/models/DeepSeek-V2-Lite-Chat"))

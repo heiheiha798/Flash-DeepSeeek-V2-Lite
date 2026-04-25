@@ -16,22 +16,53 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_MAX_NEW_TOKENS = 100
 DEFAULT_PROMPT = "Write me a 500 word novel."
 GRAPH_WARMUP_STEPS = 3
+KERNEL_FAMILY = "batch"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.hardware_info import collect_hardware_info
-from triton_kernels.moe_grouped_gemv import PackedRoutedExperts, packed_routed_moe, pack_routed_experts
+from triton_kernels.moe_batch import (
+    PackedRoutedExperts,
+    packed_routed_moe,
+    pack_routed_experts,
+)
+from triton_kernels.moe_small_gemv import (
+    batched_grouped_routed_moe_route_gemv,
+    grouped_routed_moe,
+)
 from triton_kernels.moe_router import router_softmax_topk6_triton
 from triton_kernels.attention_prepost import (
     copy_single_token_to_cache,
     prepare_decode_inputs_triton,
     residual_add_triton,
 )
-from triton_kernels.attention_decode import attention_decode_triton, pack_attention_weights
+from triton_kernels.attention_decode_batch import (
+    attention_decode_triton,
+    pack_attention_weights,
+)
+from triton_kernels.attention_decode_small import (
+    attention_decode_only_triton,
+    attention_decode_small_batch_triton,
+)
 from triton_kernels.mlp_elementwise import silu_mul_triton
 from triton_kernels.rmsnorm import rmsnorm_triton
+
+
+def set_kernel_family(kernel_family: str) -> None:
+    if kernel_family not in {"small", "batch"}:
+        raise ValueError(f"Unknown kernel family: {kernel_family}")
+    global KERNEL_FAMILY
+    KERNEL_FAMILY = kernel_family
+
+
+def _use_small_batch_kernels(batch_size: int) -> bool:
+    return KERNEL_FAMILY == "small"
+
+
+def _active_path_name(batch_size: int) -> str:
+    return "triton_small_gemv_graph" if _use_small_batch_kernels(batch_size) else "triton_batching_graph"
 
 
 class GraphCacheLayer(CacheLayerMixin):
@@ -186,13 +217,19 @@ class GraphCache(Cache):
             layer.restore(layer_snapshot)
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="HF decode-only CUDA graph SOTA path with Triton kernels.")
+def _parse_args(description: str) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
     parser.add_argument("--prompt", type=str, default=DEFAULT_PROMPT)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--batch-sizes", type=str, default=None, help='Comma/space separated sweep, e.g. "1 2 4".')
+    parser.add_argument(
+        "--kernel-family",
+        choices=("batch", "small"),
+        default="batch",
+        help="Decode kernel family: grouped batching kernels or small-GEMV kernels.",
+    )
     parser.add_argument("--device", type=str, default=DEFAULT_DEVICE)
     parser.add_argument("--dump-token-ids", action="store_true")
     parser.add_argument("--dump-step-trace", action="store_true")
@@ -246,7 +283,11 @@ def _initialize_packed_moe(model: torch.nn.Module) -> None:
             num_experts=self._graph_packed_num_experts,
             topk=self._graph_packed_topk,
         )
-        return packed_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
+        if not _use_small_batch_kernels(int(x.shape[0])):
+            return packed_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
+        if x.shape[0] == 1:
+            return grouped_routed_moe(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
+        return batched_grouped_routed_moe_route_gemv(x, topk_ids, topk_weight, packed, output_dtype=x.dtype)
 
     for layer in model.model.layers:
         mlp = layer.mlp
@@ -330,17 +371,43 @@ def _patch_attention_for_graph(model: torch.nn.Module) -> None:
         layer_cache = past_key_value.layers[self.layer_idx]
         kv_seq_len = layer_cache.max_cache_len if layer_cache.static_mode else layer_cache.seq_len + int(hidden_states.shape[1])
         cos, sin = self.rotary_emb(hidden_states, seq_len=kv_seq_len)
-        attn_output = attention_decode_triton(
-            hidden_states=hidden_states,
-            cos=cos,
-            sin=sin,
-            position_ids=position_ids,
-            cache_position=layer_cache.cache_position,
-            key_cache=layer_cache.keys,
-            value_cache=layer_cache.values,
-            packed=self._graph_packed_attention_weights,
-            softmax_scale=float(self.softmax_scale),
-        )
+        use_small_batch = _use_small_batch_kernels(int(hidden_states.shape[0]))
+        if use_small_batch and hidden_states.shape[0] == 1:
+            attn_output = attention_decode_only_triton(
+                hidden_states=hidden_states,
+                cos=cos,
+                sin=sin,
+                position_ids=position_ids,
+                cache_position=layer_cache.cache_position,
+                key_cache=layer_cache.keys,
+                value_cache=layer_cache.values,
+                packed=self._graph_packed_attention_weights,
+                softmax_scale=float(self.softmax_scale),
+            )
+        elif use_small_batch:
+            attn_output = attention_decode_small_batch_triton(
+                hidden_states=hidden_states,
+                cos=cos,
+                sin=sin,
+                position_ids=position_ids,
+                cache_position=layer_cache.cache_position,
+                key_cache=layer_cache.keys,
+                value_cache=layer_cache.values,
+                packed=self._graph_packed_attention_weights,
+                softmax_scale=float(self.softmax_scale),
+            )
+        else:
+            attn_output = attention_decode_triton(
+                hidden_states=hidden_states,
+                cos=cos,
+                sin=sin,
+                position_ids=position_ids,
+                cache_position=layer_cache.cache_position,
+                key_cache=layer_cache.keys,
+                value_cache=layer_cache.values,
+                packed=self._graph_packed_attention_weights,
+                softmax_scale=float(self.softmax_scale),
+            )
         return attn_output, None, past_key_value
 
     def _graph_attention_forward(
@@ -612,7 +679,7 @@ def _run_graph_decode(
 
     return {
         "batch_size": batch_size,
-        "path": "triton_decode_graph",
+        "path": _active_path_name(batch_size),
         "generated_ids": output_generated_ids,
         "decode_tokens": batch_size * max(max_new_tokens - 1, 0),
         "prefill_seconds": prefill_seconds,
@@ -639,7 +706,9 @@ def _build_result(run_result: dict, include_token_ids: bool, include_step_trace:
 
 
 def main() -> None:
-    args = _parse_args()
+    description = "DeepSeek-V2-Lite decode using a selectable Triton kernel family."
+    args = _parse_args(description)
+    set_kernel_family(args.kernel_family)
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this benchmark")
     batch_sizes = _parse_batch_sizes(args)

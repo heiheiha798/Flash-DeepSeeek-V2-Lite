@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640" role="img">
 <title>Batch-size throughput scaling</title>
-<desc>Log-log line chart comparing src/sota, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>
+<desc>Log-log line chart comparing src/run.py kernel families, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>
 <rect width="1080" height="640" fill="white" />
 <text x="540.0" y="32.0" text-anchor="middle" font-size="24" font-weight="700">Batch Scaling</text>
 <text x="540.0" y="56.0" text-anchor="middle" font-size="14" fill="#555">DeepSeek-V2-Lite-Chat, NVIDIA A100 80GB PCIe GPU3, input 24 tokens, output/decode 100 tokens</text>
@@ -43,16 +43,26 @@
 <rect x="92" y="72" width="708" height="486" fill="none" stroke="#222" stroke-width="1.2" />
 <text x="446.0" y="616.0" text-anchor="middle" font-size="16" fill="#111">Batch size / parallel sequences</text>
 <text x="24" y="315.0" text-anchor="middle" font-size="16" fill="#111" transform="rotate(-90 24 315.0)">Throughput (tok/s, log scale)</text>
-<polyline points="92.0,477.9 180.5,429.7 269.0,371.6 357.5,319.3 446.0,258.2 534.5,204.3 623.0,163.9 711.5,135.9 800.0,121.2" fill="none" stroke="#d62728" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
-<polygon points="92.0,471.9 86.0,477.9 92.0,483.9 98.0,477.9" fill="#d62728" />
-<polygon points="180.5,423.7 174.5,429.7 180.5,435.7 186.5,429.7" fill="#d62728" />
+<polyline points="92.0,478.8 180.5,429.5 269.0,371.6 357.5,320.7 446.0,258.2 534.5,204.1 623.0,163.8 711.5,135.9 800.0,120.7" fill="none" stroke="#d62728" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,472.8 86.0,478.8 92.0,484.8 98.0,478.8" fill="#d62728" />
+<polygon points="180.5,423.5 174.5,429.5 180.5,435.5 186.5,429.5" fill="#d62728" />
 <polygon points="269.0,365.6 263.0,371.6 269.0,377.6 275.0,371.6" fill="#d62728" />
-<polygon points="357.5,313.3 351.5,319.3 357.5,325.3 363.5,319.3" fill="#d62728" />
+<polygon points="357.5,314.7 351.5,320.7 357.5,326.7 363.5,320.7" fill="#d62728" />
 <polygon points="446.0,252.2 440.0,258.2 446.0,264.2 452.0,258.2" fill="#d62728" />
-<polygon points="534.5,198.3 528.5,204.3 534.5,210.3 540.5,204.3" fill="#d62728" />
-<polygon points="623.0,157.9 617.0,163.9 623.0,169.9 629.0,163.9" fill="#d62728" />
+<polygon points="534.5,198.1 528.5,204.1 534.5,210.1 540.5,204.1" fill="#d62728" />
+<polygon points="623.0,157.8 617.0,163.8 623.0,169.8 629.0,163.8" fill="#d62728" />
 <polygon points="711.5,129.9 705.5,135.9 711.5,141.9 717.5,135.9" fill="#d62728" />
-<polygon points="800.0,115.2 794.0,121.2 800.0,127.2 806.0,121.2" fill="#d62728" />
+<polygon points="800.0,114.7 794.0,120.7 800.0,126.7 806.0,120.7" fill="#d62728" />
+<polyline points="92.0,465.1 180.5,442.1 269.0,394.1 357.5,367.1 446.0,346.2 534.5,334.5 623.0,325.7 711.5,320.9 800.0,318.2" fill="none" stroke="#ff7f0e" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<polygon points="92.0,459.1 86.0,465.1 92.0,471.1 98.0,465.1" fill="#ff7f0e" />
+<polygon points="180.5,436.1 174.5,442.1 180.5,448.1 186.5,442.1" fill="#ff7f0e" />
+<polygon points="269.0,388.1 263.0,394.1 269.0,400.1 275.0,394.1" fill="#ff7f0e" />
+<polygon points="357.5,361.1 351.5,367.1 357.5,373.1 363.5,367.1" fill="#ff7f0e" />
+<polygon points="446.0,340.2 440.0,346.2 446.0,352.2 452.0,346.2" fill="#ff7f0e" />
+<polygon points="534.5,328.5 528.5,334.5 534.5,340.5 540.5,334.5" fill="#ff7f0e" />
+<polygon points="623.0,319.7 617.0,325.7 623.0,331.7 629.0,325.7" fill="#ff7f0e" />
+<polygon points="711.5,314.9 705.5,320.9 711.5,326.9 717.5,320.9" fill="#ff7f0e" />
+<polygon points="800.0,312.2 794.0,318.2 800.0,324.2 806.0,318.2" fill="#ff7f0e" />
 <polyline points="92.0,474.9 180.5,436.3 269.0,402.1 357.5,361.9 446.0,321.3 534.5,276.7 623.0,225.8 711.5,196.8 800.0,145.4" fill="none" stroke="#1f77b4" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
 <rect x="87.0" y="469.9" width="10" height="10" fill="#1f77b4" />
 <rect x="175.5" y="431.3" width="10" height="10" fill="#1f77b4" />
@@ -86,15 +96,18 @@
 <text x="844.0" y="82.0" font-size="16" font-weight="700" fill="#111">Backend</text>
 <line x1="844" y1="100.0" x2="878" y2="100.0" stroke="#d62728" stroke-width="3" stroke-linecap="round" />
 <polygon points="861.0,94.0 855.0,100.0 861.0,106.0 867.0,100.0" fill="#d62728" />
-<text x="890.0" y="105.0" font-size="14" fill="#111">src/sota (9341 tok/s @ bsz 256)</text>
-<line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
-<rect x="856.0" y="149.0" width="10" height="10" fill="#1f77b4" />
-<text x="890.0" y="159.0" font-size="14" fill="#111">SGLang (7094 tok/s @ bsz 256)</text>
-<line x1="844" y1="208.0" x2="878" y2="208.0" stroke="#2ca02c" stroke-width="3" stroke-linecap="round" />
-<polygon points="861.0,202.0 855.0,213.0 867.0,213.0" fill="#2ca02c" />
-<text x="890.0" y="213.0" font-size="14" fill="#111">vLLM (6114 tok/s @ bsz 256)</text>
-<line x1="844" y1="262.0" x2="878" y2="262.0" stroke="#9467bd" stroke-width="3" stroke-linecap="round" />
-<polygon points="861.0,256.0 855.0,262.0 861.0,268.0 867.0,262.0" fill="#9467bd" />
-<text x="890.0" y="267.0" font-size="14" fill="#111">llama.cpp (2052 tok/s @ bsz 256)</text>
+<text x="890.0" y="105.0" font-size="14" fill="#111">src/batch (9403 tok/s @ bsz 256)</text>
+<line x1="844" y1="154.0" x2="878" y2="154.0" stroke="#ff7f0e" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,148.0 855.0,154.0 861.0,160.0 867.0,154.0" fill="#ff7f0e" />
+<text x="890.0" y="159.0" font-size="14" fill="#111">src/small GEMV (988 tok/s @ bsz 256)</text>
+<line x1="844" y1="208.0" x2="878" y2="208.0" stroke="#1f77b4" stroke-width="3" stroke-linecap="round" />
+<rect x="856.0" y="203.0" width="10" height="10" fill="#1f77b4" />
+<text x="890.0" y="213.0" font-size="14" fill="#111">SGLang (7094 tok/s @ bsz 256)</text>
+<line x1="844" y1="262.0" x2="878" y2="262.0" stroke="#2ca02c" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,256.0 855.0,267.0 867.0,267.0" fill="#2ca02c" />
+<text x="890.0" y="267.0" font-size="14" fill="#111">vLLM (6114 tok/s @ bsz 256)</text>
+<line x1="844" y1="316.0" x2="878" y2="316.0" stroke="#9467bd" stroke-width="3" stroke-linecap="round" />
+<polygon points="861.0,310.0 855.0,316.0 861.0,322.0 867.0,316.0" fill="#9467bd" />
+<text x="890.0" y="321.0" font-size="14" fill="#111">llama.cpp (2052 tok/s @ bsz 256)</text>
 <text x="844.0" y="606.0" font-size="12" fill="#666">all plotted backends capped at bsz 256</text>
 </svg>

@@ -24,43 +24,49 @@ Target configuration:
 - decode shape: `q_len=1`
 - default output length: `100` new tokens
 
-The goal is not general inference serving. The optimized `src/sota.py` path now
-uses shared q_len=1 decode kernels across batch sizes for the custom attention
-and MoE path. This improves batch scaling substantially, but the unified batched
-path currently sacrifices the old batch=1 peak throughput because it no longer
-uses the earlier single-token-only attention/MoE specializations. Serving
-baselines under `baselines/` are capped at batch size 256 for comparable plots.
+The goal is not general inference serving. The active runner compares two
+q_len=1 Triton decode kernel families:
+
+- `--kernel-family small`: batched API with a small-GEMV implementation template.
+- `--kernel-family batch`: grouped batching kernels for larger batch efficiency.
+
+Serving baselines under `baselines/` are capped at batch size 256 for comparable
+plots.
 
 The kernel optimization goal is to iterate quickly on fixed-shape decode kernels
 and measure whether they improve real decode latency.
 
 ## Main Entrypoints
 
-Run the current baseline:
+Run the small-GEMV kernel family:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
-  src/baseline.py --device cuda:0 --max-new-tokens 100
+  src/run.py --kernel-family small --device cuda:0 --max-new-tokens 100
 ```
 
-Run the current optimized path:
+Run the grouped batching kernel family:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
-  src/sota.py --device cuda:0 --max-new-tokens 100
+  src/run.py --kernel-family batch --device cuda:0 --max-new-tokens 100
 ```
 
-Run the SOTA reporting sweep over common batch sizes:
+Run the two reporting sweeps over common batch sizes:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
-  src/sota.py --device cuda:0 --max-new-tokens 100 \
+  src/run.py --kernel-family small --device cuda:0 --max-new-tokens 100 \
+  --batch-sizes "1 2 4 8 16 32 64 128 256"
+
+CUDA_VISIBLE_DEVICES=0 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
+  src/run.py --kernel-family batch --device cuda:0 --max-new-tokens 100 \
   --batch-sizes "1 2 4 8 16 32 64 128 256"
 ```
 
-Interpretation: all listed batch sizes use the unified q_len=1
-`triton_decode_graph` path. Third-party serving baselines and the committed plot
-are capped at batch size 256 for comparable measurements.
+Interpretation: the two `--kernel-family` values intentionally use different
+kernel implementations so their curves show method tradeoffs, not a hidden
+auto-selected best path.
 
 For performance runs, check `nvidia-smi` first and do not run two GPU workloads
 on the same card. GPU3 has been the preferred card for final numbers, but GPU0
@@ -77,7 +83,7 @@ CUDA_VISIBLE_DEVICES=0 nsys profile \
   --force-overwrite=true \
   --output=nsys-reps/sota_gpu0_node \
   /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
-  src/sota.py --device cuda:0 --max-new-tokens 100
+  src/run.py --kernel-family batch --device cuda:0 --max-new-tokens 100
 ```
 
 MoE kernel `ncu` micro profile:
@@ -97,9 +103,9 @@ CUDA_VISIBLE_DEVICES=0 ncu \
 
 ## Current Performance Snapshot
 
-The latest stable GPU3 SOTA snapshot before repo cleanup:
+The latest stable GPU3 batch-kernel snapshot before repo cleanup:
 
-- command: `CUDA_VISIBLE_DEVICES=3 ... src/sota.py --device cuda:0 --max-new-tokens 100`
+- command: `CUDA_VISIBLE_DEVICES=3 ... src/run.py --kernel-family batch --device cuda:0 --max-new-tokens 100`
 - decode throughput: about `195+ TPS`
 - hardware: `NVIDIA A100 80GB PCIe`, `sm80`, `80 GB`, `INTEL(R) XEON(R) PLATINUM 8558P`, `96C/192T`, `503.53 GiB RAM`
 - software: `Python 3.10.20`, `torch 2.10.0+cu130`, `torch CUDA 13.0`, `triton 3.6.0`, `transformers 4.57.6`
@@ -112,8 +118,7 @@ GPU0 is slower on this machine, but useful for relative micro profiling.
 ## Active Directory Layout
 
 - `src/`: runnable DeepSeek-V2-Lite decode scripts.
-- `src/baseline.py`: HF decode-only CUDA graph baseline.
-- `src/sota.py`: current Triton-optimized path.
+- `src/run.py`: CUDA graph runner with `--kernel-family small|batch`.
 - `triton_kernels/`: custom Triton kernel implementations only.
 - `tools/`: micro profile and validation scripts.
 - `baselines/`: third-party baseline wrappers, including llama.cpp, SGLang, and vLLM.
@@ -147,7 +152,7 @@ pip install -r requirements.txt
 
 ## Documentation
 
-- `docs/hf_profile_summary.md`: profile conclusions for baseline and SOTA.
+- `docs/hf_profile_summary.md`: historical profile conclusions for the earlier baseline/SOTA split.
 - `docs/triton_kernel_optimizations.md`: effective Triton optimizations and failed attempts.
 - `docs/performance_reporting.md`: TPS report format with hardware and software context.
 

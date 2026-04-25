@@ -4,10 +4,10 @@
 
 ## 自动输出
 
-`src/baseline.py` 和 `src/sota.py` 的 JSON 输出包含：
+`src/run.py --kernel-family small|batch` 的 JSON 输出包含：
 
 - `batch_size`：请求 batch size。
-- `path`：实际运行路径。`src/sota.py` 中 `triton_sota_graph` 表示 batch=1 手写 Triton CUDA graph 路径；`batched_eager_fallback` 表示 batch>1 的 batched eager fallback。
+- `path`：实际运行路径。`triton_small_gemv_graph` 表示 small-GEMV kernel family；`triton_batching_graph` 表示 grouped batching kernel family。
 - `ttft_ms`：prefill 到首 token 的时间。
 - `tps`：decode 阶段 throughput，计算口径是 `decode_tokens / decode_seconds`。
 - `decode_tokens`：decode 阶段统计的 token 数，不包含 TTFT 对应的首 token。
@@ -18,7 +18,7 @@
 ```json
 {
   "batch_size": 1,
-  "path": "triton_sota_graph",
+  "path": "triton_batching_graph",
   "ttft_ms": 123.45,
   "tps": 195.0,
   "decode_tokens": 99,

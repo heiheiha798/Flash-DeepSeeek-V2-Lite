@@ -55,7 +55,8 @@ April 25, 2026. Shape is input length 24 and output length 100. Logs are under
 
 ![Batch-size throughput scaling](figures/batch_scaling.svg)
 
-The plot includes the third-party baselines and the current `src/sota` custom Triton path.
+The plot includes the third-party baselines plus the custom Triton
+`src/run.py --kernel-family batch` and `--kernel-family small` paths.
 
 | Batch | SGLang decode tok/s | vLLM output tok/s | llama.cpp batched tg tok/s |
 | ---: | ---: | ---: | ---: |
@@ -76,28 +77,31 @@ Notes:
 - llama.cpp values are from `llama-batched-bench -npl`, i.e. real parallel sequences. The tool refused `npl=512` with `n_seq_max must be <= 256`, so the valid llama.cpp curve stops at 256.
 
 
-## src/sota Batch Sweep
+## src Batch Sweep
 
-The current custom Triton path was rerun on physical GPU 3 on April 25, 2026
-after adding small-batch linear tiling and expanding grouped-MoE tile
-autotuning. MoE still uses the grouped batched implementation for all active
-batch sizes; the experimental route-major low-route path remains disabled.
-Shape is input length 24 and output length 100.
+The current custom Triton path was rerun on physical GPU 3 on April 25, 2026.
+Shape is input length 24 and output length 100. The table compares two forced
+dispatch modes: batching kernels for every batch size, and small-GEMV kernels
+for every measured batch size.
 
-| Batch | Path | Decode tok/s |
-| ---: | --- | ---: |
-| 1 | `triton_decode_graph` | 159.59 |
-| 2 | `triton_decode_graph` | 276.67 |
-| 4 | `triton_decode_graph` | 537.08 |
-| 8 | `triton_decode_graph` | 974.91 |
-| 16 | `triton_decode_graph` | 1957.76 |
-| 32 | `triton_decode_graph` | 3622.55 |
-| 64 | `triton_decode_graph` | 5742.33 |
-| 128 | `triton_decode_graph` | 7902.50 |
-| 256 | `triton_decode_graph` | 9340.77 |
+| Batch | Forced batching tok/s | Forced small-GEMV tok/s |
+| ---: | ---: | ---: |
+| 1 | 158.07 | 184.64 |
+| 2 | 277.16 | 240.25 |
+| 4 | 537.06 | 415.45 |
+| 8 | 959.59 | 565.07 |
+| 16 | 1958.82 | 716.89 |
+| 32 | 3631.14 | 819.37 |
+| 64 | 5745.78 | 906.00 |
+| 128 | 7902.87 | 957.10 |
+| 256 | 9402.64 | 987.84 |
 
 Note: all plotted backends are capped at batch size 256. The earlier 512 point
 is intentionally excluded from the plot and table.
+
+The plotted `src/small GEMV` series is diagnostic. It runs the `bsz=1`-template
+GEMV family through `B=256` to compare a distinct kernel implementation method
+against full batching kernels; it is not presented as the final dispatch policy.
 
 ## Reproduction Commands
 
@@ -115,7 +119,14 @@ RESULT_DIR="${RUN_DIR}/llama_cpp" GPU=3 DSV2_GGUF=/data/models/gguf-models/DeepS
   baselines/llama_cpp/bench_dsv2_lite_batch_sweep.sh 2>&1 | tee "${RUN_DIR}/llama_cpp.log"
 
 CUDA_VISIBLE_DEVICES=3 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
-  src/sota.py --model-path /data/models/DeepSeek-V2-Lite-Chat --device cuda:0 \
+  src/run.py --kernel-family batch \
+  --model-path /data/models/DeepSeek-V2-Lite-Chat --device cuda:0 \
   --max-new-tokens 100 --batch-sizes "1 2 4 8 16 32 64 128 256" \
-  2>&1 | tee "${RUN_DIR}/src_sota_sweep.log"
+  2>&1 | tee "${RUN_DIR}/src_batch_sweep.log"
+
+CUDA_VISIBLE_DEVICES=3 /data/home/tianjianyang/.conda/envs/flashmla/bin/python \
+  src/run.py --kernel-family small \
+  --model-path /data/models/DeepSeek-V2-Lite-Chat --device cuda:0 \
+  --max-new-tokens 100 --batch-sizes "1 2 4 8 16 32 64 128 256" \
+  2>&1 | tee "${RUN_DIR}/src_small_gemv_sweep.log"
 ```

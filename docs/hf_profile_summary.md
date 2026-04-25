@@ -1,6 +1,8 @@
 # HF Profile Summary
 
-本文档记录当前 `DeepSeek-V2-Lite-Chat` baseline 与 Triton SOTA 路径的 profile 结论。
+本文档记录早期 `DeepSeek-V2-Lite-Chat` baseline 与 Triton SOTA 路径的
+profile 结论。当前活跃入口已收敛为 `src/run.py --kernel-family
+small|batch`；本文保留作为历史 profile 参考。
 
 当前主线：
 

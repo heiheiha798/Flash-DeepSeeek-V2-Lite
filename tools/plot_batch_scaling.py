@@ -7,16 +7,27 @@ from pathlib import Path
 
 BATCHES = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 SERIES = {
-    "src/sota": {
-        1: 159.59,
-        2: 276.67,
-        4: 537.08,
-        8: 974.91,
-        16: 1957.76,
-        32: 3622.55,
-        64: 5742.33,
-        128: 7902.50,
-        256: 9340.77,
+    "src/batch": {
+        1: 158.07,
+        2: 277.16,
+        4: 537.06,
+        8: 959.59,
+        16: 1958.82,
+        32: 3631.14,
+        64: 5745.78,
+        128: 7902.87,
+        256: 9402.64,
+    },
+    "src/small GEMV": {
+        1: 184.64,
+        2: 240.25,
+        4: 415.45,
+        8: 565.07,
+        16: 716.89,
+        32: 819.37,
+        64: 906.00,
+        128: 957.10,
+        256: 987.84,
     },
     "SGLang": {
         1: 165.16,
@@ -53,13 +64,15 @@ SERIES = {
     },
 }
 COLORS = {
-    "src/sota": "#d62728",
+    "src/batch": "#d62728",
+    "src/small GEMV": "#ff7f0e",
     "SGLang": "#1f77b4",
     "vLLM": "#2ca02c",
     "llama.cpp": "#9467bd",
 }
 MARKERS = {
-    "src/sota": "circle",
+    "src/batch": "circle",
+    "src/small GEMV": "circle",
     "SGLang": "square",
     "vLLM": "triangle",
     "llama.cpp": "diamond",
@@ -156,7 +169,7 @@ def build_svg() -> str:
     return "\n".join([
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img">',
         "<title>Batch-size throughput scaling</title>",
-        "<desc>Log-log line chart comparing src/sota, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>",
+        "<desc>Log-log line chart comparing src/run.py kernel families, SGLang, vLLM, and llama.cpp batched-bench throughput across batch sizes.</desc>",
         *elements,
         "</svg>",
         "",

@@ -1,7 +1,7 @@
 # Batched Decode Profiling Notes
 
-This note records the A100 profiling state for the current unified
-`triton_decode_graph` path and the current explanation for two observations:
+This note records the A100 profiling state for the current CUDA graph decode
+runner and the current explanation for two observations:
 
 - Batch scaling from `bsz=128` to `bsz=256` is lower than the small-batch growth.
 - `bsz=1` is slower than the earlier single-token-only implementation, even
@@ -15,7 +15,7 @@ tile shape or one fixed route-grouping policy for every batch size.
 ## Profile Setup
 
 - GPU: NVIDIA A100 80GB PCIe GPU3
-- Current path: `src/sota.py` `triton_decode_graph`
+- Current runner: `src/run.py --kernel-family batch|small`
 - Current profiles:
   - `nsys-reps/sota_bsz64_a100_node.nsys-rep`
   - `nsys-reps/sota_bsz128_a100_node.nsys-rep`
@@ -300,17 +300,70 @@ not fully match the earlier GEMV-oriented implementation:
 | Total GPU kernel time | 612.45 ms | 737.17 ms | +124.72 ms |
 
 This supports a clearer design split: keep a common front-end and common batched
-semantics, but add a small-batch kernel family for `B <= 8`. The front-end can
-select the kernel family from the known static batch size before CUDA graph
-capture.
+semantics, but add a small-batch kernel family and measure it across the full
+batch range. The front-end can later select the kernel family from the known
+static batch size before CUDA graph capture, using the measured crossover
+instead of assuming a fixed threshold.
 
 Planned split:
 
-- `B <= 8`: small-batch kernels that are still batched over `[B, ...]`, but use
-  GEMV-like projection tiles and route-major MoE kernels that avoid full grouped
-  route metadata.
-- `B > 8`: current grouped batched kernels with shape-keyed autotuning.
+- Small-batch family: kernels that are still batched over `[B, ...]`, but use
+  small-B projection tiles and lower-route-count MoE variants.
+- Batching family: current grouped batched kernels with shape-keyed autotuning.
 
 The small-batch family should not be a `bsz=1`-only path. It should support
-`B=1/2/4/8` through the same API so the scheduler only chooses between
+`B=1/2/4/8/...` through the same API so the scheduler only chooses between
 small-batch and grouped-batch kernel families.
+
+## 2026-04-25 Forced Small-GEMV Full Sweep
+
+Implemented a full-range comparison between two explicit kernel-family modes:
+
+- `src/run.py --kernel-family batch`: use the current batching kernel family
+  for every batch size.
+- `src/run.py --kernel-family small`: use the small-GEMV kernel family for
+  every measured batch size, including large batches.
+
+This is intentionally a research comparison, not a final SOTA composition. The
+goal is to measure the entire small-batch curve against the entire batching
+curve and locate the transition point empirically.
+
+The small-GEMV family in this run includes:
+
+- `B=1`: GEMV-like attention decode and route-local MoE.
+- `B>=2`: per-row attention projection GEMV kernels and route-local batched MoE
+  kernels. This deliberately follows the `bsz=1` implementation template and
+  does not use grouped batching GEMM kernels.
+
+A100 GPU3, `max_new_tokens=100`, input length 24:
+
+| Batch | Batching TPS | Forced small-GEMV TPS | Result |
+| ---: | ---: | ---: | --- |
+| 1 | 158.07 | 184.64 | small-GEMV wins |
+| 2 | 277.16 | 240.25 | batching wins |
+| 4 | 537.06 | 415.45 | batching wins |
+| 8 | 959.59 | 565.07 | batching wins |
+| 16 | 1958.82 | 716.89 | batching wins |
+| 32 | 3631.14 | 819.37 | batching wins |
+| 64 | 5745.78 | 906.00 | batching wins |
+| 128 | 7902.87 | 957.10 | batching wins |
+| 256 | 9402.64 | 987.84 | batching wins |
+
+Conclusion:
+
+- The pure `bsz=1`-template small-GEMV implementation only wins at `B=1`.
+- Starting at `B=2`, it loses because route-local GEMV duplicates expert weight
+  reads across routes instead of grouping the one or two tokens that hit the
+  same expert into a tiny per-expert GEMM.
+- The matching `B=2` `nsys` comparison shows separate kernel families:
+  `_batched_fused_gate_up_swiglu_kernel` and `_batched_down_partial_kernel` for
+  small-GEMV, versus `_grouped_gate_up_swiglu_kernel` and
+  `_grouped_down_partial_kernel` for batching. The attention projection is also
+  separate: `_small_batch_gemv_kernel` is 4.125 ms versus `_batched_linear_kernel`
+  5.216 ms for 243 calls. The end-to-end loss therefore comes from the MoE
+  route-local method and graph/runtime structure, not from accidentally using
+  the batching GEMM kernels.
+- The next kernel family to explore should be per-expert and count-aware:
+  `count=1` uses GEMV-like work, while `count=2/4/...` uses tiny expert-local
+  GEMM. That is different from both full grouped batching GEMM and route-local
+  independent GEMV.

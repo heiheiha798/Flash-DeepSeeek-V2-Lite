@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from triton_kernels.moe_grouped_gemv import PackedRoutedExperts, grouped_routed_moe
+from triton_kernels.moe_small_gemv import PackedRoutedExperts, grouped_routed_moe
 
 
 def _parse_args() -> argparse.Namespace:

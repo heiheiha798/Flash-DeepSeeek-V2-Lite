@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from triton_kernels.attention_decode import _gemv_contig_kernel
+from triton_kernels.attention_decode_small import _gemv_contig_kernel
 
 
 def _parse_args() -> argparse.Namespace:
