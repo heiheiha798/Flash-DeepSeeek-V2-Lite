@@ -172,7 +172,6 @@ def _grouped_gate_up_swiglu_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_K: tl.constexpr,
-    COMBINE_GATE_UP: tl.constexpr,
 ):
     block_idx = tl.program_id(0)
     row_block_idx = tl.program_id(1)
@@ -195,73 +194,38 @@ def _grouped_gate_up_swiglu_kernel(
     row_offsets = row_start + tl.arange(0, BLOCK_M)
     row_mask = row_offsets < intermediate_size
     k_offsets_base = tl.arange(0, BLOCK_K)
-    if COMBINE_GATE_UP:
-        gate_up_offsets = tl.arange(0, 2 * BLOCK_M)
-        gate_up_row_offsets = row_start + (gate_up_offsets // 2)
-        gate_up_rows = tl.where(
-            (gate_up_offsets % 2) == 0,
-            gate_up_row_offsets,
-            intermediate_size + gate_up_row_offsets,
+    gate_up_offsets = tl.arange(0, 2 * BLOCK_M)
+    gate_up_row_offsets = row_start + (gate_up_offsets // 2)
+    gate_up_rows = tl.where(
+        (gate_up_offsets % 2) == 0,
+        gate_up_row_offsets,
+        intermediate_size + gate_up_row_offsets,
+    )
+    gate_up_row_mask = gate_up_row_offsets < intermediate_size
+    gate_up_acc = tl.zeros((BLOCK_N, 2 * BLOCK_M), dtype=tl.float32)
+
+    k_block = 0
+    while k_block * BLOCK_K < hidden_size:
+        k_start = k_block * BLOCK_K
+        k_offsets = k_start + k_offsets_base
+        k_mask = k_offsets < hidden_size
+        x_tile = tl.load(
+            x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
+            mask=route_mask[:, None] & k_mask[None, :],
+            other=0.0,
         )
-        gate_up_row_mask = gate_up_row_offsets < intermediate_size
-        gate_up_acc = tl.zeros((BLOCK_N, 2 * BLOCK_M), dtype=tl.float32)
+        gate_up_w = tl.load(
+            gate_up_ptr
+            + expert_id * gate_up_stride_e
+            + k_offsets[:, None] * gate_up_stride_k
+            + gate_up_rows[None, :] * gate_up_stride_m,
+            mask=k_mask[:, None] & gate_up_row_mask[None, :],
+            other=0.0,
+        )
+        gate_up_acc += tl.dot(x_tile, gate_up_w)
+        k_block += 1
 
-        k_block = 0
-        while k_block * BLOCK_K < hidden_size:
-            k_start = k_block * BLOCK_K
-            k_offsets = k_start + k_offsets_base
-            k_mask = k_offsets < hidden_size
-            x_tile = tl.load(
-                x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
-                mask=route_mask[:, None] & k_mask[None, :],
-                other=0.0,
-            )
-            gate_up_w = tl.load(
-                gate_up_ptr
-                + expert_id * gate_up_stride_e
-                + k_offsets[:, None] * gate_up_stride_k
-                + gate_up_rows[None, :] * gate_up_stride_m,
-                mask=k_mask[:, None] & gate_up_row_mask[None, :],
-                other=0.0,
-            )
-            gate_up_acc += tl.dot(x_tile, gate_up_w)
-            k_block += 1
-
-        gate_acc, up_acc = tl.split(tl.reshape(gate_up_acc, (BLOCK_N, BLOCK_M, 2)))
-    else:
-        gate_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
-        up_acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
-
-        k_block = 0
-        while k_block * BLOCK_K < hidden_size:
-            k_start = k_block * BLOCK_K
-            k_offsets = k_start + k_offsets_base
-            k_mask = k_offsets < hidden_size
-            x_tile = tl.load(
-                x_ptr + token_idx[:, None] * x_stride_b + k_offsets[None, :] * x_stride_k,
-                mask=route_mask[:, None] & k_mask[None, :],
-                other=0.0,
-            )
-            gate_w = tl.load(
-                gate_up_ptr
-                + expert_id * gate_up_stride_e
-                + k_offsets[:, None] * gate_up_stride_k
-                + row_offsets[None, :] * gate_up_stride_m,
-                mask=k_mask[:, None] & row_mask[None, :],
-                other=0.0,
-            )
-            up_w = tl.load(
-                gate_up_ptr
-                + expert_id * gate_up_stride_e
-                + k_offsets[:, None] * gate_up_stride_k
-                + (intermediate_size + row_offsets)[None, :] * gate_up_stride_m,
-                mask=k_mask[:, None] & row_mask[None, :],
-                other=0.0,
-            )
-            gate_acc += tl.dot(x_tile, gate_w)
-            up_acc += tl.dot(x_tile, up_w)
-            k_block += 1
-
+    gate_acc, up_acc = tl.split(tl.reshape(gate_up_acc, (BLOCK_N, BLOCK_M, 2)))
     routed_hidden = gate_acc * tl.sigmoid(gate_acc) * up_acc
     tl.store(
         hidden_ptr + route_idx[:, None] * hidden_stride_r + row_offsets[None, :] * hidden_stride_m,
@@ -537,7 +501,6 @@ def _run_batched_grouped_routed_moe_grouped_triton(
         BLOCK_N=gate_block_n,
         BLOCK_M=gate_block_m,
         BLOCK_K=gate_block_k,
-        COMBINE_GATE_UP=_combine_gate_up_dot(),
         num_warps=4,
     )
     if gate_block_n != down_block_n:
@@ -628,10 +591,6 @@ def _parse_moe_tile_env(name: str) -> tuple[int, int, int] | None:
     if any(part <= 0 for part in tile):
         raise ValueError(f"{name} must contain positive integers, got {value!r}")
     return tile  # type: ignore[return-value]
-
-
-def _combine_gate_up_dot() -> bool:
-    return os.environ.get("DSV2_BATCH_MOE_GATE_UP_DOT", "combined").lower() not in {"split", "separate", "false", "0"}
 
 
 def _select_moe_grouped_tile(
